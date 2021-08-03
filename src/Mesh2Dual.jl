@@ -316,7 +316,7 @@ function parmetis_mesh_to_dual(elmdist::Array{T,1},
           Ref{MPI.Comm}(comm)
          )
     rank = MPI.Comm_rank(comm)
-    ne_local = elmdist[rank+1]
+    ne_local = elmdist[rank+2]-elmdist[rank+1]
     x_adj = GC.@preserve r_xadj [unsafe_load(r_xadj[] ,i) for i=1:ne_local+1]
     x_adjncy = GC.@preserve r_adjncy [unsafe_load(r_adjncy[],i) for i=1:x_adj[end] ]
     return x_adj, x_adjncy
