@@ -35,7 +35,7 @@ end
 
 
 """
-graph structure
+very basic Graph structure
 """
 struct Graph
     adj::Array{Array{Int64,1},1}
@@ -249,7 +249,7 @@ metis\\_mesh\\_to\\_dual(;ne::Int64, nn::Int64, eptr::Array{Int64,1}, eind::Arra
 call the METIS_MeshToDual function
 """
 
-function metis_mesh_to_dual(;ne::Int64, nn::Int64 , eptr::Array{Int32,1}, eind::Array{Int32,1}, ncommon::Int64, baseval::Int64)
+function metis_mesh_to_dual(;ne::Int64, nn::Int64 , eptr::Array{T,1}, eind::Array{T,1}, ncommon::Int64, baseval::Int64) where {T}
     if "METIS_LIB" in keys(ENV)
         metis_str = ENV["METIS_LIB"]
     else
@@ -260,16 +260,16 @@ function metis_mesh_to_dual(;ne::Int64, nn::Int64 , eptr::Array{Int32,1}, eind::
     @assert lib_metis != nothing
     mesh_to_dual_ptr = dlsym(lib_metis, :METIS_MeshToDual)
     @debug "METIS_MeshToDual Pointer", mesh_to_dual_ptr
-    r_xadj = Ref{Ptr{Cint}}()
-    r_adjncy = Ref{Ptr{Cint}}()
+    r_xadj = Ref{Ptr{T}}()
+    r_adjncy = Ref{Ptr{T}}()
     ccall(mesh_to_dual_ptr, Cvoid, 
-          (Ref{Cint}, Ref{Cint}, Ptr{Cint}, Ptr{Cint}, Ref{Cint}, Ref{Cint}, Ref{Ptr{Cint}}, Ref{Ptr{Cint}}),
-          Ref{Cint}(ne),
-          Ref{Cint}(nn),
+          (Ref{T}, Ref{T}, Ptr{T}, Ptr{T}, Ref{T}, Ref{T}, Ref{Ptr{T}}, Ref{Ptr{T}}),
+          Ref{T}(ne),
+          Ref{T}(nn),
           eptr,
           eind,
-          Ref{Cint}(ncommon),
-          Ref{Cint}(baseval),
+          Ref{T}(ncommon),
+          Ref{T}(baseval),
           r_xadj,
           r_adjncy
          )
@@ -278,7 +278,16 @@ function metis_mesh_to_dual(;ne::Int64, nn::Int64 , eptr::Array{Int32,1}, eind::
     return x_adj, x_adjncy
 end 
 
-function parmetis_mesh_to_dual(elmdist::Array{T,1}, 
+"""
+parmetis\\_mesh\\_to\\_dual(;elmdist, eptr, eind, baseval, ncommon, comm)
+
+call the PARMETIS_Mesh2Dual routine which computes the dual graph of a mesh
+using ncommon points to define adjacency relationship between elements.
+elmdist is a common integer vector to all process such that
+`[elmdist[rank+1],elmdist[rank+2]-1]` is the range of elements of 
+the process of rank rank
+"""
+function parmetis_mesh_to_dual(;elmdist::Array{T,1}, 
                                eptr::Array{T,1}, 
                                eind::Array{T,1}, 
                                baseval::T, 
@@ -317,6 +326,7 @@ function parmetis_mesh_to_dual(elmdist::Array{T,1},
          )
     rank = MPI.Comm_rank(comm)
     ne_local = elmdist[rank+2]-elmdist[rank+1]
+    println("je suis $rank, j'ai $ne_local elements")
     x_adj = GC.@preserve r_xadj [unsafe_load(r_xadj[] ,i) for i=1:ne_local+1]
     x_adjncy = GC.@preserve r_adjncy [unsafe_load(r_adjncy[],i) for i=1:x_adj[end] ]
     return x_adj, x_adjncy
