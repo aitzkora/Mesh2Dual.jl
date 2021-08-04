@@ -22,8 +22,9 @@ elseif rank == 2
   eind = Int32[5, 6, 10, 11, 6, 7, 11, 12, 7, 8, 12, 13, 8, 9, 13, 14]
 end
 elmdist = Int32[0, 2, 4, 8]
-xadj, adjcy = parmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), 
-                                    comm = comm)
+#xadj, adjcy = parmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), 
+#                                    comm = comm)
+dgraph_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), comm = comm) 
 MPI.Barrier(comm)
-println("I'm $rank, xadj = $xadj, adjcy = $adjcy")
+#println("I'm $rank, xadj = $xadj, adjcy = $adjcy")
 MPI.Finalize()

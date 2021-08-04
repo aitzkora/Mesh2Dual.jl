@@ -4,7 +4,8 @@ using MPI
 using Revise
 
 export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_graph, 
-       mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual
+       mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
+       dgraph_dual
 
 """
 `Mesh` implements a very basic topological structure for meshes
@@ -332,4 +333,43 @@ function parmetis_mesh_to_dual(;elmdist::Array{T,1},
     return x_adj, x_adjncy
 end  # function parmetis_mesh_to_dual
 
+"""
+dgraph\\_dual\\(;elmdist, eptr, eind, baseval, ncommon, comm)
+computes a distributed dual graph
+"""
+function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, baseval::T, ncommon::T, comm::MPI.Comm) where T
+  r = MPI.Comm_rank(comm)
+  p = MPI.Comm_size(comm)
+  ne = elmdist[p+1]
+  neLoc = elmdist[r+2]-elmdist[r+1]
+
+  nnLoc = maximum(eind) - baseval + 1
+  nMax = Ref{T}(nnLoc)
+  n2e = [Vector{T}() for _ in 1:nnLoc]
+  MPI.Allreduce!(nMax, MPI.MAX, comm)
+  nn = nMax[]
+  if (r == 0) 
+    println("ne = $ne, nn = $nn")
+  end
+  # first pass : compute local n2e 
+  nLocs = Set{T}()
+  for i=1:neLoc
+    for n ∈ eind[1+eptr[i]:eptr[i+1]] # ∀ n ∈ e
+          union!(n2e[n+1],i)
+          push!(nLocs, n)
+    end 
+  end 
+  n2p = [ Vector{T}() for _ in 1:nn]
+  for n=baseval:nn-1+baseval
+    nInNlocs = (n in nLocs)
+    countLoc = [(nInNlocs) ? T(1) : T(0)]
+    counts = MPI.Allgather(countLoc, comm)
+    nBuffLoc = (nInNlocs) ? [T(r)] : T[]
+    n2p[n-baseval+1] = fill(zero(T), sum(counts))
+    MPI.Allgatherv!(nBuffLoc, VBuffer(n2p[n-baseval+1], counts), comm)
+  end
+  if (r == 0)
+    println("n2p = $n2p")
+  end
+end
 end # module
