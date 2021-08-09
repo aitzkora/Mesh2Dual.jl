@@ -353,14 +353,14 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   end
   # first pass : compute local n2e 
   nLocs = Set{T}()
-  for i=1:neLoc
-    for n ∈ eind[1+eptr[i]:eptr[i+1]] # ∀ n ∈ e
-          union!(n2e[n+1],i)
-          push!(nLocs, n)
+  for i=1:neLoc # ∀ e local element
+    for n ∈ eind[1+eptr[i]:eptr[i+1]]  #∀ n ∈ e
+      union!(n2e[n-baseval+1],i)
+      push!(nLocs, n)
     end 
   end 
   n2p = [ Vector{T}() for _ in 1:nn]
-  for n=baseval:nn-1+baseval
+  for n=baseval:nn-1+baseval # ∀ n 
     nInNlocs = (n in nLocs)
     countLoc = [(nInNlocs) ? T(1) : T(0)]
     counts = MPI.Allgather(countLoc, comm)
@@ -368,8 +368,43 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     n2p[n-baseval+1] = fill(zero(T), sum(counts))
     MPI.Allgatherv!(nBuffLoc, VBuffer(n2p[n-baseval+1], counts), comm)
   end
-  if (r == 0)
-    println("n2p = $n2p")
+  if r == 0
+    println("I'm $r,   n2p = $n2p")
   end
-end
+  #! size exchanges
+  max_size = maximum(map(length, n2p))
+  size_swap = Dict( i => fill(T(0),max_size) for i in [ j-baseval+1 for j=baseval:nn-1+baseval if length(n2p[j-baseval+1]) > 1 ])
+  println("nloc = $nLocs")
+  for n=nLocs
+    if length(n2p[n-baseval+1])> 1
+      for r2=n2p[n-baseval+1]
+        if (r2 != r) 
+          println("$r →  $r2 : $(length(n2e[n-baseval+1])) elems pour le noeud $n ")
+          
+          #MPI_sendrecv( size_swap[i-baseval+1][j-baseval+1], j, tag,
+          #              size_swap[j-baseval+1][i-baseval+1], j, tag, comm)
+        end
+      end
+    end
+  end
+  #tab_swap = Dict( i => fill(T[],max_size) for i in nLocs)
+  #for i=nLocs
+  #  for j=n2p[i-baseval+1]
+  #    if (j != i) 
+  #      tab_swap[i][j] = fill(T(0), size_swap[i][j])
+  #    end
+  #  end
+  #end
+  #for i=nLocs
+  #  for j=n2p[i-baseval+1]
+  #    if (j != i) 
+  #      tag = i * p * p + j * p 
+  #      MP_Sendrecv!(@view(tab_swap[i][j][:]), j, tag
+  #                   @view(tab_swap[j][i][:]), j, tag, comm)
+  #    end
+  #  end
+  #end
+  #! 
+
+end # function
 end # module
