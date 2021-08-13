@@ -198,7 +198,7 @@ end
 """
 metis\\_fmt\\_to\\_graph(eptr::Vector{T}, eind::Vector{T}, min_node::T)
 
-converts a metis adjncy list to a Vector of Vector
+converts a metis adjacency list to a Vector of Vector
 """
 function metis_fmt_to_vector(eptr::Vector{T}, eind::Vector{T}, min_node::T = T(1)) where {T}
     elems = fill(T[],size(eptr,1)-1)
@@ -250,7 +250,7 @@ metis\\_mesh\\_to\\_dual(;ne::Int64, nn::Int64, eptr::Array{Int64,1}, eind::Arra
 call the METIS_MeshToDual function
 """
 
-function metis_mesh_to_dual(;ne::Int64, nn::Int64 , eptr::Array{T,1}, eind::Array{T,1}, ncommon::Int64, baseval::Int64) where {T}
+function metis_mesh_to_dual(;ne::T, nn::T , eptr::Vector{T}, eind::Vector{T}, ncommon::T, baseval::T) where {T}
     if "METIS_LIB" in keys(ENV)
         metis_str = ENV["METIS_LIB"]
     else
@@ -274,8 +274,8 @@ function metis_mesh_to_dual(;ne::Int64, nn::Int64 , eptr::Array{T,1}, eind::Arra
           r_xadj,
           r_adjncy
          )
-    x_adj = [unsafe_load(r_xadj[] ,i) for i=1:ne+1]
-    x_adjncy = [unsafe_load(r_adjncy[],i) for i=1:x_adj[end] ]
+    x_adj = GC.@preserve r_xadj [unsafe_load(r_xadj[] ,i) for i=1:ne+1]
+    x_adjncy = GC.@preserve r_adjncy [unsafe_load(r_adjncy[],i) for i=1:x_adj[end] ]
     return x_adj, x_adjncy
 end 
 

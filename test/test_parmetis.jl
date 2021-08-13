@@ -1,6 +1,6 @@
 using Mesh2Dual
 using MPI
-
+using Test
 
 MPI.Init()
 comm = MPI.COMM_WORLD
@@ -30,8 +30,9 @@ xadj, adjcy = parmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, base
                                     comm = comm)
 adj_check = metis_fmt_to_vector(xadj, adjcy, Int32(0))
 MPI.Barrier(comm)
-@assert length(adj) == length(adj_check)
+@test length(adj) == length(adj_check)
 for i=1:length(adj)
-  @assert sort(adj[i]) == sort(adj_check[i])
+  @test sort(adj[i]) == sort(adj_check[i])
 end
 MPI.Finalize()
+@test MPI.Finalized()
