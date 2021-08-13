@@ -10,7 +10,7 @@ using Mesh2Dual
               [2,4,3]])
 
     @test mesh_to_metis_fmt(m) == (Cint[0,3,6,9,12,15,18],Cint[0,1,2,0,1,5,1,5,4,1,4,6,1,6,3,1,3,2], Cint(1))
-    @test metis_fmt_to_graph(mesh_to_metis_fmt(m)...).adj == m.elements
+    @test metis_fmt_to_vector(mesh_to_metis_fmt(m)...) == m.elements
 end
 
 @testset "graph_dual" begin
