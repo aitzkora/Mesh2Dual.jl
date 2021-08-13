@@ -24,7 +24,8 @@ end
 elmdist = Int32[0, 2, 4, 8]
 #xadj, adjcy = parmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), 
 #                                    comm = comm)
-dgraph_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), comm = comm) 
+adj = dgraph_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), comm = comm) 
+println("adj = $adj")
 MPI.Barrier(comm)
 #println("I'm $rank, xadj = $xadj, adjcy = $adjcy")
 MPI.Finalize()

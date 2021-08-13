@@ -355,10 +355,11 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   nLocs = Set{T}()
   for i=1:neLoc # ∀ e local element
     for n ∈ eind[1+eptr[i]:eptr[i+1]]  #∀ n ∈ e
-      union!(n2e[n-baseval+1],i)
+      union!(n2e[n-baseval+1],i-1+elmdist[r+1])
       push!(nLocs, n)
     end 
   end 
+  #println("n2e = $n2e")
   n2p = [ Vector{T}() for _ in 1:nn]
   for n=baseval:nn-1+baseval # ∀ n 
     nInNlocs = (n in nLocs)
@@ -368,43 +369,83 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     n2p[n-baseval+1] = fill(zero(T), sum(counts))
     MPI.Allgatherv!(nBuffLoc, VBuffer(n2p[n-baseval+1], counts), comm)
   end
-  if r == 0
-    println("I'm $r,   n2p = $n2p")
-  end
+  #if r == 0
+  #  println("I'm $r,   n2p = $n2p")
+  #end
   #! size exchanges
   max_size = maximum(map(length, n2p))
-  size_swap = Dict( i => fill(T(0),max_size) for i in [ j-baseval+1 for j=baseval:nn-1+baseval if length(n2p[j-baseval+1]) > 1 ])
-  println("nloc = $nLocs")
+  size_swap = Dict( i => Dict{T,Vector{T}}() for i in nLocs if length(n2p[i-baseval+1]) > 1 )
   for n=nLocs
     if length(n2p[n-baseval+1])> 1
       for r2=n2p[n-baseval+1]
         if (r2 != r) 
-          println("$r →  $r2 : $(length(n2e[n-baseval+1])) elems pour le noeud $n ")
-          
-          #MPI_sendrecv( size_swap[i-baseval+1][j-baseval+1], j, tag,
-          #              size_swap[j-baseval+1][i-baseval+1], j, tag, comm)
+          tag1 = n * p * p + r * p + r2 
+          tag2 = n * p * p + r2 * p + r 
+          #println("$r →  $r2 : $(length(n2e[n-baseval+1])) elems pour le noeud $n , tag = $tag1, $tag2")
+          size_swap[n][r] = [T(length(n2e[n-baseval+1]))]
+          size_swap[n][r2] = [T(0)]
+          MPI.Sendrecv!(@view(size_swap[n][r][1]), r2, tag2, @view(size_swap[n][r2][1]), r2, tag1, comm)
         end
       end
     end
   end
-  #tab_swap = Dict( i => fill(T[],max_size) for i in nLocs)
-  #for i=nLocs
-  #  for j=n2p[i-baseval+1]
-  #    if (j != i) 
-  #      tab_swap[i][j] = fill(T(0), size_swap[i][j])
-  #    end
-  #  end
-  #end
-  #for i=nLocs
-  #  for j=n2p[i-baseval+1]
-  #    if (j != i) 
-  #      tag = i * p * p + j * p 
-  #      MP_Sendrecv!(@view(tab_swap[i][j][:]), j, tag
-  #                   @view(tab_swap[j][i][:]), j, tag, comm)
-  #    end
-  #  end
-  #end
-  #! 
+  #println("size_swap = $size_swap")
+  tab_swap = Dict( i => Dict{T,Vector{T}}() for i in nLocs if length(n2p[i-baseval+1]) > 1)
+  for n=nLocs
+    if length(n2p[n-baseval+1])> 1
+      for r2=n2p[n-baseval+1]
+        if (r2 != r) 
+          tab_swap[n][r] = n2e[n-baseval+1]
+          tab_swap[n][r2] = fill(T(0), size_swap[n][r2][1])
+          tag1 = n * p * p + r * p + r2 
+          tag2 = n * p * p + r2 * p + r 
+          MPI.Sendrecv!(@view(tab_swap[n][r][:]), r2, tag2, @view(tab_swap[n][r2][:]), r2, tag1, comm)
+        end
+      end
+    end
+  end
+  for n=nLocs
+    if length(n2p[n-baseval+1])> 1
+      for r2=n2p[n-baseval+1]
+        if (r2 != r) 
+          #println("je recois depuis $r2, les elements $(tab_swap[n][r2]) qui contiennent aussi $n ")
+          union!(n2e[n-baseval+1], tab_swap[n][r2])
+        end
+      end
+    end
+  end
 
+  # Now we have all the information to build 1-dual graph
+  adj = [Array{T,1}() for _ in 1:neLoc]
+  for i=1:neLoc # ∀ e local element
+    for n ∈ eind[1+eptr[i]:eptr[i+1]]  #∀ n ∈ e
+      for e₂ ∈ n2e[n-baseval+1] #∀ e₂ ⊃ { n }
+        if e₂ ≠ ((i-1) + elmdist[r+1])
+          union!(adj[i],e₂) #! beware for baseval of i
+       end
+     end
+    end 
+  end 
+  if (ncommon > 1) 
+    adjp = [Vector{T}() for _ in 1:neLoc]
+    for i=1:neLoc
+      accu = fill(T(0), length(adj[i]))
+      for n ∈ eind[1+eptr[i]:eptr[i+1]] 
+        for (j,e₂) ∈ enumerate(adj[i])
+          if ( (e₂ ∈ n2e[n-baseval+1]) & (e₂ ≠ ((i-1) + elmdist[r+1] )))
+              accu[j] += 1
+          end 
+        end
+      end 
+      for (j,e₂) ∈ enumerate(adj[i])
+        if (accu[j] >= ncommon)
+          union!(adjp[i], e₂)
+        end
+      end
+    end # end for i
+  else
+    adjp = adj
+  end 
+  return adjp
 end # function
 end # module
