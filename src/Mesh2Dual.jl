@@ -3,7 +3,7 @@ module Mesh2Dual
 using MPI
 using Revise
 
-export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_graph, 
+export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_vector, 
        mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
        dgraph_dual
 
@@ -196,17 +196,17 @@ function graph_dual_new(m::Mesh, n_common::Int = 1)
 end
 
 """
-metis\\_fmt\\_to\\_graph(eptr::Array{Cint,1}, eind::Array{Cint,1}, min_node::Cint)
+metis\\_fmt\\_to\\_graph(eptr::Vector{T}, eind::Vector{T}, min_node::T)
 
-converts a metis adjncy list to a graph
+converts a metis adjncy list to a Vector of Vector
 """
-function metis_fmt_to_graph(eptr::Array{Cint,1}, eind::Array{Cint,1}, min_node::Cint = Cint(1))
-    elems = fill(Int64[],size(eptr,1)-1)
-    nodes = Int64[]
+function metis_fmt_to_vector(eptr::Vector{T}, eind::Vector{T}, min_node::T = T(1)) where {T}
+    elems = fill(T[],size(eptr,1)-1)
+    nodes = T[]
     for i=1:length(eptr)-1
         elems[i] = eind[eptr[i]+1:eptr[i+1]] .+ min_node
     end
-    return Graph(elems)
+    return elems
 end
 
 using Libdl: dlopen, dlsym
@@ -242,7 +242,7 @@ function metis_graph_dual(m::Mesh, n_common::Int)
          )
     x_adj = [unsafe_load(r_xadj[] ,i) for i=1:length(m.elements)+1]
     x_adjncy = [unsafe_load(r_adjncy[],i) for i=1:x_adj[end] ]
-    return metis_fmt_to_graph(x_adj, x_adjncy, mini_node)
+    return Graph(metis_fmt_to_vector(x_adj, x_adjncy, mini_node))
 end 
 
 """
@@ -310,7 +310,7 @@ function parmetis_mesh_to_dual(;elmdist::Array{T,1},
     @assert lib_parmetis != nothing
     @debug lib_metis
     @assert lib_metis != nothing
-     mesh_to_dual_ptr = dlsym(lib_parmetis, :ParMETIS_V3_Mesh2Dual)
+    mesh_to_dual_ptr = dlsym(lib_parmetis, :ParMETIS_V3_Mesh2Dual)
     @debug "PARMETIS_MeshToDual Pointer", mesh_to_dual_ptr
     r_xadj = Ref{Ptr{T}}()
     r_adjncy = Ref{Ptr{T}}()
@@ -327,7 +327,6 @@ function parmetis_mesh_to_dual(;elmdist::Array{T,1},
          )
     rank = MPI.Comm_rank(comm)
     ne_local = elmdist[rank+2]-elmdist[rank+1]
-    println("je suis $rank, j'ai $ne_local elements")
     x_adj = GC.@preserve r_xadj [unsafe_load(r_xadj[] ,i) for i=1:ne_local+1]
     x_adjncy = GC.@preserve r_adjncy [unsafe_load(r_adjncy[],i) for i=1:x_adj[end] ]
     return x_adj, x_adjncy
@@ -337,7 +336,7 @@ end  # function parmetis_mesh_to_dual
 dgraph\\_dual\\(;elmdist, eptr, eind, baseval, ncommon, comm)
 computes a distributed dual graph
 """
-function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, baseval::T, ncommon::T, comm::MPI.Comm) where T
+function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, baseval::T, ncommon::T, comm::MPI.Comm) where {T}
   r = MPI.Comm_rank(comm)
   p = MPI.Comm_size(comm)
   ne = elmdist[p+1]
@@ -348,9 +347,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   n2e = [Vector{T}() for _ in 1:nnLoc]
   MPI.Allreduce!(nMax, MPI.MAX, comm)
   nn = nMax[]
-  if (r == 0) 
-    println("ne = $ne, nn = $nn")
-  end
+
   # first pass : compute local n2e 
   nLocs = Set{T}()
   for i=1:neLoc # ∀ e local element
@@ -359,7 +356,6 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       push!(nLocs, n)
     end 
   end 
-  #println("n2e = $n2e")
   n2p = [ Vector{T}() for _ in 1:nn]
   for n=baseval:nn-1+baseval # ∀ n 
     nInNlocs = (n in nLocs)
@@ -369,10 +365,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     n2p[n-baseval+1] = fill(zero(T), sum(counts))
     MPI.Allgatherv!(nBuffLoc, VBuffer(n2p[n-baseval+1], counts), comm)
   end
-  #if r == 0
-  #  println("I'm $r,   n2p = $n2p")
-  #end
-  #! size exchanges
+  # compute the sizes of exchanges
   max_size = maximum(map(length, n2p))
   size_swap = Dict( i => Dict{T,Vector{T}}() for i in nLocs if length(n2p[i-baseval+1]) > 1 )
   for n=nLocs
@@ -381,7 +374,6 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
         if (r2 != r) 
           tag1 = n * p * p + r * p + r2 
           tag2 = n * p * p + r2 * p + r 
-          #println("$r →  $r2 : $(length(n2e[n-baseval+1])) elems pour le noeud $n , tag = $tag1, $tag2")
           size_swap[n][r] = [T(length(n2e[n-baseval+1]))]
           size_swap[n][r2] = [T(0)]
           MPI.Sendrecv!(@view(size_swap[n][r][1]), r2, tag2, @view(size_swap[n][r2][1]), r2, tag1, comm)
@@ -389,7 +381,8 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       end
     end
   end
-  #println("size_swap = $size_swap")
+
+  # do the exchange
   tab_swap = Dict( i => Dict{T,Vector{T}}() for i in nLocs if length(n2p[i-baseval+1]) > 1)
   for n=nLocs
     if length(n2p[n-baseval+1])> 1
@@ -404,11 +397,12 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       end
     end
   end
+
+  # merge local node to elements with exchanged data
   for n=nLocs
     if length(n2p[n-baseval+1])> 1
       for r2=n2p[n-baseval+1]
         if (r2 != r) 
-          #println("je recois depuis $r2, les elements $(tab_swap[n][r2]) qui contiennent aussi $n ")
           union!(n2e[n-baseval+1], tab_swap[n][r2])
         end
       end
@@ -442,7 +436,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
           union!(adjp[i], e₂)
         end
       end
-    end # end for i
+    end 
   else
     adjp = adj
   end 
