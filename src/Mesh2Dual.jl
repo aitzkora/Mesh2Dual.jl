@@ -5,17 +5,16 @@ using Revise
 
 export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_vector, 
        mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
-       dgraph_dual
+       dgraph_dual, gen_parts
 
 """
 `Mesh` implements a very basic topological structure for meshes
 """
-struct Mesh
-    elements::Array{Array{Int64,1},1}
-    nodes::Array{Int64,1}
-    Mesh(elem::Array{Array{Int64,1},1})=
-    begin
-        new(elem, sort(reduce(union,elem)))
+struct Mesh{T}
+    elements::Vector{Vector{T}}
+    nodes::Vector{T}
+    function Mesh{T}(elem::Vector{Vector{T}}) where {T}
+      new{T}(elem, sort(reduce(union,elem)))
     end
 end
 
@@ -38,8 +37,8 @@ end
 """
 very basic Graph structure
 """
-struct Graph
-    adj::Array{Array{Int64,1},1}
+struct Graph{T}
+    adj::Vector{Vector{T}}
 end
 
 """
@@ -55,53 +54,47 @@ gen_parts(l::Array{Int64,1}, k::Int)
 
 generates an Array contaning the (#l choose k) sets of k elements in the set l
 """
-function gen_parts(l::Array{Int64,1}, k::Int64)
+function gen_parts(l::Vector{T}, k::T) where {T}
     n = size(l, 1)
-    gen =[ (1:n) .*i for i in filter(x->sum(x)==k,digits.(0:2^n-1,base=2, pad=n))] 
-    return map(x->Set(l[x]), setdiff.(unique.(gen),[0]))
+    gen =[ (T(1):T(n)) .*i for i in filter(x->sum(x)==k,digits.(T(0):T(2^n-1),base=T(2), pad=T(n)))] 
+    return map(x->Set(l[x]), setdiff.(unique.(gen),[T(0)]))
 end 
 
-@testset "gen_parts_test" begin
-   l = [1, 2, 4]
-   @test Set(gen_parts(l, 2)) == Set(Set.([(1,2),(1,4),(2,4)]))
-   @test Set(gen_parts(l, 1)) == Set(Set.([(1),(2),(4)])) 
-   @test Set(gen_parts(l, 3)) == Set(Set.([(1,2,4)])) 
-end
-
 """ 
-graph\\_dual(m::Mesh, n\\_common::Int64)
+graph\\_dual(m::Mesh{T}, n\\_common::T)
 
 Compute the elements graph of the Mesh m respect to the following adjacency
 relationship
 e₁ ~ e₂ ↔ e₁,e₂ have n\\_common shared vertices 
 """
-function graph_dual(m::Mesh, n_common::Int64)
-    T = Dict()
-    # build the hash table for each n_common selection
-    for (i, e) in enumerate(m.elements)
-         for r in gen_parts(e, n_common)
-              if (! haskey(T, r) )
-                  T[r] = Set([i])
-              else
-                  push!(T[r],i)
-              end
-         end
+function graph_dual(m::Mesh{T}, n_common::Int) where {T}
+  n_common = T(n_common)
+  table = Dict()
+  # build the hash table for each n_common selection
+  for (i, e) in enumerate(m.elements)
+    for r in gen_parts(e, n_common)
+      if (! haskey(table, r) )
+        table[r] = Set([T(i)])
+      else
+        push!(table[r], T(i))
+      end
     end
-    for ke in T
-        @debug Tuple(ke.first), " → " ,typeof(ke.second)
+  end
+  for ke in table
+      @debug Tuple(ke.first), " → " ,typeof(ke.second)
+  end
+  #now build adjacency
+  adj = [ Set{T}() for _ in 1:length(m.elements)]
+  for (i, e) in enumerate(m.elements)
+    for r in gen_parts(e, n_common)
+      union!(adj[i], table[r])
     end
-    #now build adjacency
-    adj = [ Set{Int64}() for _ in 1:length(m.elements)]
-    for (i, e) in enumerate(m.elements)
-        for r in gen_parts(e, n_common)
-            union!(adj[i], T[r])
-        end
-    end
-    # suppress reflexive adjacency
-    for (i, e) in enumerate(m.elements)
-        setdiff!(adj[i], i)
-    end
-    return Graph(map(x->sort(collect(keys(x.dict))), adj))
+  end
+  # suppress reflexive adjacency
+  for (i, e) in enumerate(m.elements)
+    setdiff!(adj[i], T(i))
+  end
+  return Graph(map(x->sort(collect(keys(x.dict))), adj))
 end 
 
 """
@@ -109,10 +102,10 @@ mesh\\_to\\_metis\\_fmt(m::Mesh)
 converts a Mesh struct to a adjacency list defining a Metis Mesh
 i.e : nodes indexes must start to zero for metis
 """
-function mesh_to_metis_fmt(m::Mesh)
-    eptr = Cint[0]
-    eind = Cint[] 
-    mini_node = Int32(minimum(m.nodes))
+function mesh_to_metis_fmt(m::Mesh{T}) where {T}
+    eptr = T[0]
+    eind = T[] 
+    mini_node = T(minimum(m.nodes))
     for (i, e) in enumerate(m.elements)
         append!(eptr, eptr[i]+length(e))
         append!(eind, e .- mini_node)
@@ -125,29 +118,29 @@ mesh\\_to\\_scotch\\_fmt(m::Mesh)
 
 converts a mesh to the SCOTCH format (i.e. a bipartite graph)
 """
-function mesh_to_scotch_fmt(m::Mesh)
-    eptr = Cint[0]
-    eind = Cint[]
+function mesh_to_scotch_fmt(m::Mesh{T}) where {T}
+    eptr = T[0]
+    eind = T[]
     baseval = minimum( m.nodes )
-    T = Dict()
+    table = Dict()
     # we construct an adjacency for nodes
     for (i, e) in enumerate(m.elements)
         append!(eptr, eptr[i]+length(e))
         append!(eind, e .- baseval)
         for n in e
-            if (! haskey(T, n))
-                T[n] = Cint[i]
+            if (! haskey(table, n))
+                table[n] = T[i]
             else
-                union!(T[n], Cint[i])
+                union!(table[n], T[i])
             end
         end
     end
     ne = length(m.elements)
     for (i, n) in enumerate(m.nodes)
-        append!(eptr, eptr[ne+i] + length(T[n]))
-        append!(eind, T[n] .- baseval)
+        append!(eptr, eptr[ne+i] + length(table[n]))
+        append!(eind, table[n] .- baseval)
     end
-    eind[1:eptr[ne+1]] .+= Cint[ne]
+    eind[1:eptr[ne+1]] .+= T[ne]
     return (eptr, eind , ne)
 end 
 
@@ -156,9 +149,10 @@ graph\\_dual\\_new(m::Mesh, n_common::Int = 1)
 computes a dual graph(i.e. element graph) using a alternative method
 prototype for the futur scotch function
 """
-function graph_dual_new(m::Mesh, n_common::Int = 1)
+function graph_dual_new(m::Mesh{T}, n_common::Int = Int(1)) where {T}
+  n_common = T(n_common)
   ptr, ind , ne = mesh_to_scotch_fmt(m)
-  adj = [Array{Int64,1}() for _ in 1:ne]
+  adj = [Vector{T}() for _ in 1:ne]
 
   # first pass : compute adjacency for n_common = 1
   for i=1:ne # ∀ e ∈ elems(m)
@@ -174,7 +168,7 @@ function graph_dual_new(m::Mesh, n_common::Int = 1)
   if (n_common == 1)
     return adj
   else
-    adjp = [Array{Int64,1}() for _ in 1:ne]
+    adjp = [Vector{T}() for _ in 1:ne]
     for e₁=1:ne 
       for e₂ ∈ adj[e₁] 
         accu = 0
@@ -216,7 +210,8 @@ metis\\_graph\\_dual(m::Mesh, n_common::Int)
 computes the graph dual (i.e. elements graph using Metis)
 """
 
-function metis_graph_dual(m::Mesh, n_common::Int)
+function metis_graph_dual(m::Mesh{T}, n_common::Int) where {T}
+    n_common = T(n_common)
     if "METIS_LIB" in keys(ENV)
         metis_str = ENV["METIS_LIB"]
     else
@@ -228,10 +223,10 @@ function metis_graph_dual(m::Mesh, n_common::Int)
     grf_dual_ptr = dlsym(lib_metis, :libmetis__CreateGraphDual)
     @debug "CreateGraphDual Pointer", grf_dual_ptr
     eptr, eind, mini_node = mesh_to_metis_fmt(m)
-    r_xadj = Ref{Ptr{Cint}}()
-    r_adjncy = Ref{Ptr{Cint}}()
+    r_xadj = Ref{Ptr{T}}()
+    r_adjncy = Ref{Ptr{T}}()
     ccall(grf_dual_ptr, Cvoid, 
-          (Cint, Cint, Ptr{Cint}, Ptr{Cint}, Cint, Ref{Ptr{Cint}}, Ref{Ptr{Cint}}),
+          (Cint, Cint, Ptr{T}, Ptr{T}, Cint, Ref{Ptr{T}}, Ref{Ptr{T}}),
           size(m.elements, 1),
           size(m.nodes, 1),
           eptr,

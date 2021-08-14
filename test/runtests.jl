@@ -1,26 +1,26 @@
 using Test
 using Mesh2Dual
+
+@testset "gen_parts_test" begin
+   l = [1, 2, 4]
+   @test Set(gen_parts(l, 2)) == Set(Set.([(1,2),(1,4),(2,4)]))
+   @test Set(gen_parts(l, 1)) == Set(Set.([(1),(2),(4)])) 
+   @test Set(gen_parts(l, 3)) == Set(Set.([(1,2,4)])) 
+end
+
 @testset "mesh_to_metis" begin
 
-    m = Mesh([[1,2,3],
-              [1,2,6],
-              [2,6,5],
-              [2,5,7],
-              [2,7,4],
-              [2,4,3]])
+  m_dat = reshape(Int32[1,2,3, 1,2,6, 2,6,5, 2,5,7, 2,7,4, 2,4,3], 3, 6)
+  m = Mesh{Int32}([m_dat[:, j] for j=1:size(m_dat,2)])
+  @test mesh_to_metis_fmt(m) == (Int32[0,3,6,9,12,15,18],Int32[0,1,2,0,1,5,1,5,4,1,4,6,1,6,3,1,3,2], Int32(1))
+  @test metis_fmt_to_vector(mesh_to_metis_fmt(m)...) == m.elements
 
-    @test mesh_to_metis_fmt(m) == (Cint[0,3,6,9,12,15,18],Cint[0,1,2,0,1,5,1,5,4,1,4,6,1,6,3,1,3,2], Cint(1))
-    @test metis_fmt_to_vector(mesh_to_metis_fmt(m)...) == m.elements
 end
 
 @testset "graph_dual" begin
 
-    m = Mesh([[1,2,3],
-              [1,2,6],
-              [2,6,5],
-              [2,5,7],
-              [2,7,4],
-              [2,4,3]])
+    m_dat = reshape([1,2,3, 1,2,6, 2,6,5, 2,5,7, 2,7,4, 2,4,3], 3, 6)
+    m = Mesh{Int64}([m_dat[:, j] for j=1:size(m_dat,2)])
 
     @test graph_dual(m, 1) == Graph([setdiff([1:6;],[i]) for i=1:6]) 
     @test graph_dual(m, 3) == Graph([ Int64[] for _ in 1:6])
@@ -31,13 +31,10 @@ end
   if !haskey(ENV, "METIS_LIB") 
     @error "you must define METIS_LIB in your variable environment"
   end
-  m = Mesh([[1,2,3],
-            [1,2,6],
-            [2,6,5],
-            [2,5,7],
-            [2,7,4],
-            [2,4,3]])
-  
+ 
+  m_dat = reshape(Int32[1,2,3, 1,2,6, 2,6,5, 2,5,7, 2,7,4, 2,4,3], 3, 6)
+  m = Mesh{Int32}([m_dat[:, j] for j=1:size(m_dat,2)])
+ 
   ptr, ind, ne  = mesh_to_scotch_fmt(m)
   
   g1 = graph_dual_new(m, 1)
