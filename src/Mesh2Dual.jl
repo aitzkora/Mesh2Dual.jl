@@ -5,7 +5,7 @@ using Revise
 
 export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_vector, 
        mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
-       dgraph_dual, gen_parts
+       dgraph_dual, gen_parts, read_par_mesh
 
 """
 `Mesh` implements a very basic topological structure for meshes
@@ -437,4 +437,85 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   end 
   return adjp
 end # function
+
+function tile(size_obj, rank) # TODO : parametrize it! 
+  # tiling indexes 
+  p = MPI.Comm_size(MPI.COMM_WORLD)
+  size_chunk = (size_obj - 1) ÷ p + 1
+  mod_chunk = size_obj % p 
+  if (mod_chunk != 0 & (rank + 1 > mod_chunk))
+    size_chunk = size_chunk - 1
+    startIndex = rank * size_chunk + mod_chunk + 1
+  else
+    startIndex = rank * size_chunk + 1
+  end
+  endIndex = startIndex + size_chunk -1
+  return startIndex, endIndex, size_chunk
+end
+
+
+function read_par_mesh(filename, ::Val{D}, baseval) where {D}
+  IndexType = typeof(baseval)
+  @assert Val(D) isa Union{map(x->Val{x},1:3)...}
+  comm = MPI.COMM_WORLD
+  p = MPI.Comm_size(comm)
+  r = MPI.Comm_rank(comm)
+  isMaster = (r == 0)
+  if (isMaster)
+    lines = readlines(filename)
+    lines = lines[map(x-> length(x) > 0 && (x[1] != '#'), lines)] # beware to the '
+    f_s(x) = findall(map(y->occursin(x,y),lines))[1]
+    dim = parse(IndexType,lines[f_s("Dimension")+1])
+    @debug "dim =", dim
+    @assert  D == dim
+    of_nodes = f_s("Vertices")
+    nb_nodes = parse(IndexType, lines[of_nodes + 1])
+    nodes = zeros(Float64, nb_nodes, dim)
+    for i=1:nb_nodes
+      nodes[i, : ] = map(x->parse(Float64,x), split(lines[of_nodes + 1 + i])[1:end-1])
+    end
+    @debug "nodes=", nodes
+    if (dim == 2)
+      of_elem = f_s("Triangles")
+    else
+      of_elem = f_s("Tetrahedra")
+    end
+    nb_elem = parse(IndexType, lines[of_elem + 1])
+  else
+    nb_elem = IndexType(0)
+    dim = IndexType(0)
+  end
+  nb_elem = MPI.bcast(nb_elem, 0, comm)
+  dim = MPI.bcast(dim, 0, comm)
+  elmdist  = zeros(IndexType, p+1)
+
+  if (isMaster) 
+    elements = zeros(IndexType, nb_elem, dim + 1)
+    for i=1:nb_elem
+      elements[i, : ] = map(x->parse(IndexType,x), split(lines[of_elem + 1 + i])[1:dim+1])
+    end
+    @debug "$elements"
+    startIndex, endIndex, _ = tile(nb_elem, 0)
+    eind = elements[startIndex:endIndex,:]
+    elmdist[1] = startIndex - 1
+    elmdist[2] = endIndex
+    for i=2:p
+      startIndex, endIndex, _ = tile(nb_elem, i-1)
+      elmdist[i+1] = elmdist[i] + endIndex-startIndex + 1
+      eind_send = elements[startIndex:endIndex,:]
+      MPI.send(eind_send, i - 1, i , comm)
+    end 
+  end
+  elmdist = MPI.bcast(elmdist,0, comm)
+  if (!isMaster)
+    (eind, _) = MPI.recv(0, r + 1, comm)
+  end  
+
+  size_chunk = (nb_elem - 1) ÷ p + 1
+  eptr = [IndexType(0):IndexType(dim+1):IndexType(size_chunk * (dim + 1));]
+  eind = eind'[:]
+  @debug "$r -> $eptr, $eind, $elmdist"
+  return (eptr, eind, elmdist)
+end
 end # module
+
