@@ -460,62 +460,58 @@ function read_par_mesh(filename, ::Val{D}, baseval) where {D}
   comm = MPI.COMM_WORLD
   p = MPI.Comm_size(comm)
   r = MPI.Comm_rank(comm)
-  isMaster = (r == 0)
-  if (isMaster)
-    lines = readlines(filename)
-    lines = lines[map(x-> length(x) > 0 && (x[1] != '#'), lines)] # beware to the '
-    f_s(x) = findall(map(y->occursin(x,y),lines))[1]
-    dim = parse(IndexType,lines[f_s("Dimension")+1])
-    @debug "dim =", dim
-    @assert  D == dim
-    of_nodes = f_s("Vertices")
-    nb_nodes = parse(IndexType, lines[of_nodes + 1])
-    nodes = zeros(Float64, nb_nodes, dim)
-    for i=1:nb_nodes
-      nodes[i, : ] = map(x->parse(Float64,x), split(lines[of_nodes + 1 + i])[1:end-1])
-    end
-    @debug "nodes=", nodes
-    if (dim == 2)
-      of_elem = f_s("Triangles")
-    else
-      of_elem = f_s("Tetrahedra")
-    end
-    nb_elem = parse(IndexType, lines[of_elem + 1])
-  else
-    nb_elem = IndexType(0)
-    dim = IndexType(0)
+  
+  lines = readlines(filename)
+  lines = lines[map(x-> length(x) > 0 && (x[1] != '#'), lines)] # beware to the '
+  f_s(x) = findall(map(y->occursin(x,y),lines))[1]
+  dim = parse(IndexType,lines[f_s("Dimension")+1])
+  if (r == 0)
+    @info "dim =", dim
   end
-  nb_elem = MPI.bcast(nb_elem, 0, comm)
-  dim = MPI.bcast(dim, 0, comm)
+  @assert  D == dim
+  of_nodes = f_s("Vertices")
+  nb_nodes = parse(IndexType, lines[of_nodes + 1])
+  nodes = zeros(Float64, nb_nodes, dim)
+  for i=1:nb_nodes
+    nodes[i, : ] = map(x->parse(Float64,x), split(lines[of_nodes + 1 + i])[1:end-1])
+  end
+  if (r == 0)
+    @info "nb_nodes=", nb_nodes
+  end
+  if (dim == 2)
+    of_elem = f_s("Triangles")
+  else
+    of_elem = f_s("Tetrahedra")
+  end
+  nb_elem = parse(IndexType, lines[of_elem + 1])
+  if (r == 0)
+    @info "nb_elem=", nb_elem
+  end
   elmdist  = zeros(IndexType, p+1)
 
-  if (isMaster) 
-    elements = zeros(IndexType, nb_elem, dim + 1)
-    for i=1:nb_elem
-      elements[i, : ] = map(x->parse(IndexType,x), split(lines[of_elem + 1 + i])[1:dim+1])
-    end
-    @debug "$elements"
-    startIndex, endIndex, _ = tile(nb_elem, 0)
-    eind = elements[startIndex:endIndex,:]
-    elmdist[1] = startIndex - 1
-    elmdist[2] = endIndex
-    for i=2:p
-      startIndex, endIndex, _ = tile(nb_elem, i-1)
-      elmdist[i+1] = elmdist[i] + endIndex-startIndex + 1
-      eind_send = elements[startIndex:endIndex,:]
-      MPI.send(eind_send, i - 1, i , comm)
-    end 
+  elements = zeros(IndexType, nb_elem, dim + 1)
+  for i=1:nb_elem
+    elements[i, : ] = map(x->parse(IndexType,x), split(lines[of_elem + 1 + i])[1:dim+1])
   end
-  elmdist = MPI.bcast(elmdist,0, comm)
-  if (!isMaster)
-    (eind, _) = MPI.recv(0, r + 1, comm)
-  end  
 
+  # build elmdist
+  startIndex, endIndex, _ = tile(nb_elem, 0)
+  elmdist[1] = startIndex - 1
+  elmdist[2] = endIndex
+  for i=2:p
+    startIndex, endIndex, _ = tile(nb_elem, i-1)
+    elmdist[i+1] = elmdist[i] + endIndex-startIndex + 1
+  end 
+  startIndex, endIndex, _ = tile(nb_elem, r)
+  eind = zeros(IndexType, endIndex - startIndex + 1 , dim + 1)
+  for i=startIndex:endIndex 
+    eind[i-startIndex+1,:] =  map(x->parse(IndexType,x), split(lines[of_elem + 1 + i])[1:dim+1])
+  end
   size_chunk = (nb_elem - 1) ÷ p + 1
   eptr = [IndexType(0):IndexType(dim+1):IndexType(size_chunk * (dim + 1));]
   eind = eind'[:]
-  @debug "$r -> $eptr, $eind, $elmdist"
   return (eptr, eind, elmdist)
 end
+
 end # module
 
