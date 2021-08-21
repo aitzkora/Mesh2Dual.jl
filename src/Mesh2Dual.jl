@@ -326,7 +326,7 @@ function parmetis_mesh_to_dual(;elmdist::Array{T,1},
     x_adjncy = GC.@preserve r_adjncy [unsafe_load(r_adjncy[],i) for i=1:x_adj[end] ]
     return x_adj, x_adjncy
 end  # function parmetis_mesh_to_dual
-
+using ProgressBars
 """
 dgraph\\_dual\\(;elmdist, eptr, eind, baseval, ncommon, comm)
 computes a distributed dual graph
@@ -360,9 +360,14 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     n2p[n-baseval+1] = fill(zero(T), sum(counts))
     MPI.Allgatherv!(nBuffLoc, VBuffer(n2p[n-baseval+1], counts), comm)
   end
+  
+  if (r == 0)
+    @info "Allgather finished"
+  end
   # compute the sizes of exchanges
   max_size = maximum(map(length, n2p))
   size_swap = Dict( i => Dict{T,Vector{T}}() for i in nLocs if length(n2p[i-baseval+1]) > 1 )
+  rreq = Dict( i=> Dict{T,MPI.Request}() for i in nLocs if length(n2p[i-baseval+1]) > 1 )
   for n=nLocs
     if length(n2p[n-baseval+1])> 1
       for r2=n2p[n-baseval+1]
@@ -371,14 +376,20 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
           tag2 = n * p * p + r2 * p + r 
           size_swap[n][r] = [T(length(n2e[n-baseval+1]))]
           size_swap[n][r2] = [T(0)]
-          MPI.Sendrecv!(@view(size_swap[n][r][1]), r2, tag2, @view(size_swap[n][r2][1]), r2, tag1, comm)
+          rreq[n][r] = MPI.Isend(size_swap[n][r][1], r2, tag1 , comm)
+          rreq[n][r2] = MPI.Irecv!(@view(size_swap[n][r2][1]), r2, tag2, comm)
         end
       end
     end
   end
+  MPI.Waitall!( [rreq[i][j] for i in keys(rreq) for j in keys(rreq[i]) ])
+  if (r == 0)
+    @info "first send/recv finished"
+  end
 
   # do the exchange
   tab_swap = Dict( i => Dict{T,Vector{T}}() for i in nLocs if length(n2p[i-baseval+1]) > 1)
+  rreq = Dict( i=> Dict{T,MPI.Request}() for i in nLocs if length(n2p[i-baseval+1]) > 1 )
   for n=nLocs
     if length(n2p[n-baseval+1])> 1
       for r2=n2p[n-baseval+1]
@@ -387,10 +398,15 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
           tab_swap[n][r2] = fill(T(0), size_swap[n][r2][1])
           tag1 = n * p * p + r * p + r2 
           tag2 = n * p * p + r2 * p + r 
-          MPI.Sendrecv!(@view(tab_swap[n][r][:]), r2, tag2, @view(tab_swap[n][r2][:]), r2, tag1, comm)
+          rreq[n][r] = MPI.Isend(@view(tab_swap[n][r][:]), r2, tag1 , comm)
+          rreq[n][r2] = MPI.Irecv!(@view(tab_swap[n][r2][:]), r2, tag2, comm)
         end
       end
     end
+  end
+  MPI.Waitall!( [rreq[i][j] for i in keys(rreq) for j in keys(rreq[i]) ])
+  if (r == 0)
+    @info "second send/recv finished"
   end
 
   # merge local node to elements with exchanged data
@@ -403,9 +419,12 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       end
     end
   end
+  if (r == 0)
+    @info "merge finished"
+  end
 
   # Now we have all the information to build 1-dual graph
-  adj = [Array{T,1}() for _ in 1:neLoc]
+  adj = [Vector{T}() for _ in 1:neLoc]
   for i=1:neLoc # ∀ e local element
     for n ∈ eind[1+eptr[i]:eptr[i+1]]  #∀ n ∈ e
       for e₂ ∈ n2e[n-baseval+1] #∀ e₂ ⊃ { n }
@@ -415,6 +434,9 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
      end
     end 
   end 
+  if (r == 0)
+    @info "1D adjacency finised"
+  end
   if (ncommon > 1) 
     adjp = [Vector{T}() for _ in 1:neLoc]
     for i=1:neLoc
