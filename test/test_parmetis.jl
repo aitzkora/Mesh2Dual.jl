@@ -23,16 +23,16 @@ elseif rank == 2
 end
 elmdist = Int32[0, 2, 4, 8]
 # our algorithm
-adj = dgraph_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), comm = comm) 
-MPI.Barrier(comm)
-# call parmetis
-xadj, adjcy = parmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), 
-                                    comm = comm)
-adj_check = metis_fmt_to_vector(xadj, adjcy, Int32(0))
-MPI.Barrier(comm)
-@test length(adj) == length(adj_check)
-for i=1:length(adj)
-  @test sort(adj[i]) == sort(adj_check[i])
-end
+#adj = dgraph_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), comm = comm) 
+#MPI.Barrier(comm)
+## call parmetis
+#xadj, adjcy = parmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), 
+#                                    comm = comm)
+#adj_check = metis_fmt_to_vector(xadj, adjcy, Int32(0))
+#MPI.Barrier(comm)
+#@test length(adj) == length(adj_check)
+#for i=1:length(adj)
+#  @test sort(adj[i]) == sort(adj_check[i])
+#end
 MPI.Finalize()
 @test MPI.Finalized()

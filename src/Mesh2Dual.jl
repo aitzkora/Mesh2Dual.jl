@@ -7,6 +7,9 @@ export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_t
        mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
        dgraph_dual, gen_parts, read_par_mesh
 
+
+include("MPI_tools.jl")
+
 """
 `Mesh` implements a very basic topological structure for meshes
 """
@@ -326,7 +329,6 @@ function parmetis_mesh_to_dual(;elmdist::Array{T,1},
     x_adjncy = GC.@preserve r_adjncy [unsafe_load(r_adjncy[],i) for i=1:x_adj[end] ]
     return x_adj, x_adjncy
 end  # function parmetis_mesh_to_dual
-using ProgressBars
 """
 dgraph\\_dual\\(;elmdist, eptr, eind, baseval, ncommon, comm)
 computes a distributed dual graph
@@ -339,125 +341,38 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
 
   nnLoc = maximum(eind) - baseval + 1
   nMax = Ref{T}(nnLoc)
-  n2e = [Vector{T}() for _ in 1:nnLoc]
+  e2n = [Vector{T}() for _ in 1:neLoc]
   MPI.Allreduce!(nMax, MPI.MAX, comm)
-  nn = nMax[]
+  nn = nMax[]-baseval + 1
 
-  # first pass : compute local n2e 
-  nLocs = Set{T}()
+  nChunks= nn ÷ p
+  toSend = [ Vector{T}() for _ in 1:p]
   for i=1:neLoc # ∀ e local element
-    for n ∈ eind[1+eptr[i]:eptr[i+1]]  #∀ n ∈ e
-      union!(n2e[n-baseval+1],i-1+elmdist[r+1])
-      push!(nLocs, n)
+    for n ∈ eind[1+eptr[i]:eptr[i+1]]  # ∀ n ∈ e
+      append!(toSend[n ÷ nChunks + 1], i-1+elmdist[r+1], n)
     end 
   end 
-  n2p = [ Vector{T}() for _ in 1:nn]
-  for n=baseval:nn-1+baseval # ∀ n 
-    nInNlocs = (n in nLocs)
-    countLoc = [(nInNlocs) ? T(1) : T(0)]
-    counts = MPI.Allgather(countLoc, comm)
-    nBuffLoc = (nInNlocs) ? [T(r)] : T[]
-    n2p[n-baseval+1] = fill(zero(T), sum(counts))
-    MPI.Allgatherv!(nBuffLoc, VBuffer(n2p[n-baseval+1], counts), comm)
-  end
-  
-  if (r == 0)
-    @info "Allgather finished"
-  end
-  # compute the sizes of exchanges
-  max_size = maximum(map(length, n2p))
-  size_swap = Dict( i => Dict{T,Vector{T}}() for i in nLocs if length(n2p[i-baseval+1]) > 1 )
-  rreq = Dict( i=> Dict{T,MPI.Request}() for i in nLocs if length(n2p[i-baseval+1]) > 1 )
-  for n=nLocs
-    if length(n2p[n-baseval+1])> 1
-      for r2=n2p[n-baseval+1]
-        if (r2 != r) 
-          tag1 = n * p * p + r * p + r2 
-          tag2 = n * p * p + r2 * p + r 
-          size_swap[n][r] = [T(length(n2e[n-baseval+1]))]
-          size_swap[n][r2] = [T(0)]
-          rreq[n][r] = MPI.Isend(size_swap[n][r][1], r2, tag1 , comm)
-          rreq[n][r2] = MPI.Irecv!(@view(size_swap[n][r2][1]), r2, tag2, comm)
-        end
-      end
-    end
-  end
-  MPI.Waitall!( [rreq[i][j] for i in keys(rreq) for j in keys(rreq[i]) ])
-  if (r == 0)
-    @info "first send/recv finished"
-  end
-
-  # do the exchange
-  tab_swap = Dict( i => Dict{T,Vector{T}}() for i in nLocs if length(n2p[i-baseval+1]) > 1)
-  rreq = Dict( i=> Dict{T,MPI.Request}() for i in nLocs if length(n2p[i-baseval+1]) > 1 )
-  for n=nLocs
-    if length(n2p[n-baseval+1])> 1
-      for r2=n2p[n-baseval+1]
-        if (r2 != r) 
-          tab_swap[n][r] = n2e[n-baseval+1]
-          tab_swap[n][r2] = fill(T(0), size_swap[n][r2][1])
-          tag1 = n * p * p + r * p + r2 
-          tag2 = n * p * p + r2 * p + r 
-          rreq[n][r] = MPI.Isend(@view(tab_swap[n][r][:]), r2, tag1 , comm)
-          rreq[n][r2] = MPI.Irecv!(@view(tab_swap[n][r2][:]), r2, tag2, comm)
-        end
-      end
-    end
-  end
-  MPI.Waitall!( [rreq[i][j] for i in keys(rreq) for j in keys(rreq[i]) ])
-  if (r == 0)
-    @info "second send/recv finished"
-  end
-
-  # merge local node to elements with exchanged data
-  for n=nLocs
-    if length(n2p[n-baseval+1])> 1
-      for r2=n2p[n-baseval+1]
-        if (r2 != r) 
-          union!(n2e[n-baseval+1], tab_swap[n][r2])
-        end
-      end
-    end
-  end
-  if (r == 0)
-    @info "merge finished"
-  end
-
-  # Now we have all the information to build 1-dual graph
-  adj = [Vector{T}() for _ in 1:neLoc]
-  for i=1:neLoc # ∀ e local element
-    for n ∈ eind[1+eptr[i]:eptr[i+1]]  #∀ n ∈ e
-      for e₂ ∈ n2e[n-baseval+1] #∀ e₂ ⊃ { n }
-        if e₂ ≠ ((i-1) + elmdist[r+1])
-          union!(adj[i],e₂) #! beware for baseval of i
-       end
-     end
-    end 
-  end 
-  if (r == 0)
-    @info "1D adjacency finised"
-  end
-  if (ncommon > 1) 
-    adjp = [Vector{T}() for _ in 1:neLoc]
-    for i=1:neLoc
-      accu = fill(T(0), length(adj[i]))
-      for n ∈ eind[1+eptr[i]:eptr[i+1]] 
-        for (j,e₂) ∈ enumerate(adj[i])
-          if ( (e₂ ∈ n2e[n-baseval+1]) & (e₂ ≠ ((i-1) + elmdist[r+1] )))
-              accu[j] += 1
-          end 
+  #@info toSend
+  toRecv = send_lists(toSend)
+  @info toRecv
+  startIndex = nChunks * r 
+  endIndex = startIndex + nChunks - 1
+  n2e = [Vector{T}() for _ in  startIndex:endIndex]
+  @info "indexes =", startIndex, ":", endIndex
+  for i=startIndex:endIndex
+    for proc=1:p
+      for j=1:2:size(toRecv[proc],1)
+        if (toRecv[proc][j+1] == i)
+          append!(n2e[i-startIndex+1],toRecv[proc][j], proc-1)
         end
       end 
-      for (j,e₂) ∈ enumerate(adj[i])
-        if (accu[j] >= ncommon)
-          union!(adjp[i], e₂)
-        end
-      end
-    end 
-  else
-    adjp = adj
-  end 
-  return adjp
+    end
+  end
+  @info n2e
+  if (r == 0)
+    @info "AlltoAllv finished"
+  end
+  return []
 end # function
 
 function tile(size_obj, rank) # TODO : parametrize it! 
