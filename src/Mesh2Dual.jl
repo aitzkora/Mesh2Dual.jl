@@ -357,7 +357,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   if (r == 0)
     @info "first AlltoAllv finished"
   end
-#@info toRecv
+  #@info toRecv
   startIndex = nChunks * r 
   endIndex = startIndex + nChunks - 1
   n2e = [Vector{T}() for _ in  startIndex:endIndex]
@@ -391,61 +391,63 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     curr = 1 
     nCurr = length(toRecv[proc]) 
     while curr <= nCurr
-       e = toRecv[proc][curr]
+       currNode = toRecv[proc][curr]
        nNodes = toRecv[proc][curr+1]
-       if ( e ∉ nn2e.keys)
-         nn2e[e] = toRecv[proc][curr+2:curr+1+nNodes]
+       if !haskey(nn2e, currNode) 
+         nn2e[currNode] = toRecv[proc][curr+2:curr+1+nNodes]
        end 
        curr += 2 + nNodes 
     end
   end
   @info  nn2e
-  ## build 1-adjacency
+   
+  # build 1-adjacency
   #for i=1:neLoc # ∀ e local element
   #  e = i-1+elmdist[r+1]
   #  for n ∈ eind[1+eptr[i]:eptr[i+1]]  # ∀ n ∈ e
-  #    if (n ∉ nn2e.keys)
+  #    if (haskey(nn2e, n))
   #      nn2e[n] = [e]
   #    else
   #      union!(nn2e[n],e)
   #    end
   #  end 
   #end
-  #adj = [Vector{T}() for _ in 1:neLoc]
-  #for i=1:neLoc # ∀ e local element
-  #  e = i-1+elmdist[r+1]
-  #  for n ∈ eind[1+eptr[i]:eptr[i+1]]  # ∀ n ∈ e
-  #    for e₂ ∈ nn2e[n]
-  #      if (e₂ ≠ e)
-  #        union!(adj[i], e₂)
-  #      end  
-  #    end 
-  #  end 
-  #end
-  #if (r == 0)
-  #  @info "1D adjacency finished"
-  #end
-  #if (ncommon > 1) 
-  #  adjp = [Vector{T}() for _ in 1:neLoc]
-  #  for i=1:neLoc
-  #    accu = fill(T(0), length(adj[i]))
-  #    for n ∈ eind[1+eptr[i]:eptr[i+1]] 
-  #      for (j,e₂) ∈ enumerate(adj[i])
-  #        if ( (e₂ ∈ n2e[n-baseval+1]) & (e₂ ≠ ((i-1) + elmdist[r+1] )))
-  #            accu[j] += 1
-  #        end 
-  #      end
-  #    end 
-  #    for (j,e₂) ∈ enumerate(adj[i])
-  #      if (accu[j] >= ncommon)
-  #        union!(adjp[i], e₂)
-  #      end
-  #    end
-  #  end 
-  #else
-  #  adjp = adj
-  #end 
-  #return adjp
+  adj = [Vector{T}() for _ in 1:neLoc]
+  for i=1:neLoc # ∀ e local element
+    e = i-1+elmdist[r+1]
+    for n ∈ eind[1+eptr[i]:eptr[i+1]]  # ∀ n ∈ e
+      for e₂ ∈ nn2e[n]
+        if (e₂ ≠ e)
+          union!(adj[i], e₂)
+        end  
+      end 
+    end 
+  end
+  @info adj 
+  if (r == 0)
+    @info "1D adjacency finished"
+  end
+  if (ncommon > 1) 
+    adjp = [Vector{T}() for _ in 1:neLoc]
+    for i=1:neLoc
+      accu = fill(T(0), length(adj[i]))
+      for n ∈ eind[1+eptr[i]:eptr[i+1]] 
+        for (j,e₂) ∈ enumerate(adj[i])
+          if ( (e₂ ∈ nn2e[n]) & (e₂ ≠ ((i-1) + elmdist[r+1] )))
+              accu[j] += 1
+          end 
+        end
+      end 
+      for (j,e₂) ∈ enumerate(adj[i])
+        if (accu[j] >= ncommon)
+          union!(adjp[i], e₂)
+        end
+      end
+    end 
+  else
+    adjp = adj
+  end 
+  return adjp
   return []
 end # function
 

@@ -1,7 +1,7 @@
 using Mesh2Dual
 using MPI
 using Test
-
+using Profile
 MPI.Init()
 comm = MPI.COMM_WORLD
 size = MPI.Comm_size(comm)
@@ -34,7 +34,6 @@ end
 xadj, adjcy = parmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), 
                                     comm = comm)
 adj_check = metis_fmt_to_vector(xadj, adjcy, Int32(0))
-MPI.Barrier(comm)
 # our algorithm
 if (rank == 0)
   print_rgb(200,0, 200, "computing dual mesh by our algorithm\n")
