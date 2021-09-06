@@ -87,3 +87,13 @@ end
     @test true
   end
 end
+
+@testset "MPI_tools_3" begin
+  using MPI
+  mpiexec() do cmd
+    testdir = @__DIR__
+    run(`$cmd -n 3 $(Base.julia_cmd()) $(joinpath(testdir, "tools.jl"))`)
+    @test true
+  end
+end
+

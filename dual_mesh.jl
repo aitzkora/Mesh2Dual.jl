@@ -1,7 +1,7 @@
 using Mesh2Dual
 using MPI
 using Test
-using Profile
+
 MPI.Init()
 comm = MPI.COMM_WORLD
 size = MPI.Comm_size(comm)
@@ -27,6 +27,10 @@ if (dim == 2)
 else
   eptr, eind, elmdist  = read_par_mesh(filename, Val(3), Int32(0)) 
 end
+println("I'm $rank, nodes ∈ [$(minimum(eind)), $(maximum(eind))]")
+println("I'm $rank, elements ∈ [$(elmdist[rank+1]), $(elmdist[rank+2])]")
+#println("I'm $rank, eptr = $(eptr)")
+#println("I'm $rank, eind = $(eind)")
 # call parmetis
 if (rank == 0)
   print_rgb(200, 0, 200, "computing dual mesh by parmetis\n")
@@ -39,7 +43,6 @@ if (rank == 0)
   print_rgb(200,0, 200, "computing dual mesh by our algorithm\n")
 end
 adj = dgraph_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), comm = comm) 
-MPI.Barrier(comm)
 if (rank == 0)
   print_rgb(200, 0, 200, "checking")
 end

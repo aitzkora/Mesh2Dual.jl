@@ -5,10 +5,12 @@ using Revise
 
 export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_vector, 
        mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
-       dgraph_dual, gen_parts, read_par_mesh
+       dgraph_dual, gen_parts, read_par_mesh, toProc, tile
 
 
 include("MPI_tools.jl")
+# to read mesh
+include("meshIO.jl")
 
 """
 `Mesh` implements a very basic topological structure for meshes
@@ -35,6 +37,11 @@ struct SimplexMesh{D}
     new{D}(D, nodes, elements)
   end
 end
+
+# to do some comparisons with metis
+include("metisCalls.jl")
+include("ParMetisCall.jl")
+
 
 
 """
@@ -206,129 +213,6 @@ function metis_fmt_to_vector(eptr::Vector{T}, eind::Vector{T}, min_node::T = T(1
     return elems
 end
 
-using Libdl: dlopen, dlsym
-
-"""
-metis\\_graph\\_dual(m::Mesh, n_common::Int)
-computes the graph dual (i.e. elements graph using Metis)
-"""
-
-function metis_graph_dual(m::Mesh{T}, n_common::Int) where {T}
-    n_common = T(n_common)
-    if "METIS_LIB" in keys(ENV)
-        metis_str = ENV["METIS_LIB"]
-    else
-        metis_str = "/usr/lib/libmetis.so"
-    end
-    lib_metis = dlopen(metis_str; throw_error=false)
-    @debug lib_metis
-    @assert lib_metis != nothing
-    grf_dual_ptr = dlsym(lib_metis, :libmetis__CreateGraphDual)
-    @debug "CreateGraphDual Pointer", grf_dual_ptr
-    eptr, eind, mini_node = mesh_to_metis_fmt(m)
-    r_xadj = Ref{Ptr{T}}()
-    r_adjncy = Ref{Ptr{T}}()
-    ccall(grf_dual_ptr, Cvoid, 
-          (Cint, Cint, Ptr{T}, Ptr{T}, Cint, Ref{Ptr{T}}, Ref{Ptr{T}}),
-          size(m.elements, 1),
-          size(m.nodes, 1),
-          eptr,
-          eind,
-          n_common,
-          r_xadj,
-          r_adjncy
-         )
-    x_adj = [unsafe_load(r_xadj[] ,i) for i=1:length(m.elements)+1]
-    x_adjncy = [unsafe_load(r_adjncy[],i) for i=1:x_adj[end] ]
-    return Graph(metis_fmt_to_vector(x_adj, x_adjncy, mini_node))
-end 
-
-"""
-metis\\_mesh\\_to\\_dual(;ne::Int64, nn::Int64, eptr::Array{Int64,1}, eind::Array{Int64,1}, baseval::Int64, ncommon::Int64)
-call the METIS_MeshToDual function
-"""
-
-function metis_mesh_to_dual(;ne::T, nn::T , eptr::Vector{T}, eind::Vector{T}, ncommon::T, baseval::T) where {T}
-    if "METIS_LIB" in keys(ENV)
-        metis_str = ENV["METIS_LIB"]
-    else
-        metis_str = "/usr/lib/libmetis.so"
-    end
-    lib_metis = dlopen(metis_str; throw_error=false)
-    @debug lib_metis
-    @assert lib_metis != nothing
-    mesh_to_dual_ptr = dlsym(lib_metis, :METIS_MeshToDual)
-    @debug "METIS_MeshToDual Pointer", mesh_to_dual_ptr
-    r_xadj = Ref{Ptr{T}}()
-    r_adjncy = Ref{Ptr{T}}()
-    ccall(mesh_to_dual_ptr, Cvoid, 
-          (Ref{T}, Ref{T}, Ptr{T}, Ptr{T}, Ref{T}, Ref{T}, Ref{Ptr{T}}, Ref{Ptr{T}}),
-          Ref{T}(ne),
-          Ref{T}(nn),
-          eptr,
-          eind,
-          Ref{T}(ncommon),
-          Ref{T}(baseval),
-          r_xadj,
-          r_adjncy
-         )
-    x_adj = GC.@preserve r_xadj [unsafe_load(r_xadj[] ,i) for i=1:ne+1]
-    x_adjncy = GC.@preserve r_adjncy [unsafe_load(r_adjncy[],i) for i=1:x_adj[end] ]
-    return x_adj, x_adjncy
-end 
-
-"""
-parmetis\\_mesh\\_to\\_dual(;elmdist, eptr, eind, baseval, ncommon, comm)
-
-call the PARMETIS_Mesh2Dual routine which computes the dual graph of a mesh
-using ncommon points to define adjacency relationship between elements.
-elmdist is a common integer vector to all process such that
-`[elmdist[rank+1],elmdist[rank+2]-1]` is the range of elements of 
-the process of rank rank
-"""
-function parmetis_mesh_to_dual(;elmdist::Array{T,1}, 
-                               eptr::Array{T,1}, 
-                               eind::Array{T,1}, 
-                               baseval::T, 
-                               ncommon::T, 
-                               comm::MPI.Comm) where {T}
-    if "METIS_LIB" in keys(ENV)
-        metis_str = ENV["METIS_LIB"]
-    else
-        metis_str = "/usr/lib/libmetis.so"
-    end
-    lib_metis = dlopen(metis_str; throw_error=false)
-     if "PARMETIS_LIB" in keys(ENV)
-        parmetis_str = ENV["PARMETIS_LIB"]
-    else
-        parmetis_str = "/usr/lib/libparmetis.so"
-    end
-    lib_parmetis = dlopen(parmetis_str; throw_error=false)
-    @debug lib_parmetis
-    @assert lib_parmetis != nothing
-    @debug lib_metis
-    @assert lib_metis != nothing
-    mesh_to_dual_ptr = dlsym(lib_parmetis, :ParMETIS_V3_Mesh2Dual)
-    @debug "PARMETIS_MeshToDual Pointer", mesh_to_dual_ptr
-    r_xadj = Ref{Ptr{T}}()
-    r_adjncy = Ref{Ptr{T}}()
-    ccall(mesh_to_dual_ptr, Cvoid, 
-          (Ptr{T}, Ptr{T}, Ptr{T}, Ref{T}, Ref{T}, Ref{Ptr{T}}, Ref{Ptr{T}}, Ref{MPI.Comm}),
-          elmdist,
-          eptr,
-          eind,
-          Ref{T}(baseval),
-          Ref{T}(ncommon),
-          r_xadj,
-          r_adjncy,
-          Ref{MPI.Comm}(comm)
-         )
-    rank = MPI.Comm_rank(comm)
-    ne_local = elmdist[rank+2]-elmdist[rank+1]
-    x_adj = GC.@preserve r_xadj [unsafe_load(r_xadj[] ,i) for i=1:ne_local+1]
-    x_adjncy = GC.@preserve r_adjncy [unsafe_load(r_adjncy[],i) for i=1:x_adj[end] ]
-    return x_adj, x_adjncy
-end  # function parmetis_mesh_to_dual
 """
 dgraph\\_dual\\(;elmdist, eptr, eind, baseval, ncommon, comm)
 computes a distributed dual graph
@@ -339,17 +223,23 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   ne = elmdist[p+1]
   neLoc = elmdist[r+2]-elmdist[r+1]
 
-  nnLoc = maximum(eind) - baseval + 1
-  nMax = Ref{T}(nnLoc)
+  nMax = Ref{T}(maximum(eind))
   e2n = [Vector{T}() for _ in 1:neLoc]
   MPI.Allreduce!(nMax, MPI.MAX, comm)
-  nn = nMax[]-baseval + 1
-
+  nMin = Ref{T}(minimum(eind))
+  MPI.Allreduce!(nMin, MPI.MIN, comm)
+  nn = nMax[] - nMin[] + T(1)
+  nMin = nMin[]
+  if r == 0
+    @info "nn, nMax, nMin :" , nn, nMax[], nMin
+  end
   nChunks= nn ÷ p
+  @info "nn :", nn
+  @info "nChunks :", nChunks
   toSend = [ Vector{T}() for _ in 1:p]
   for i=1:neLoc # ∀ e local element
     for n ∈ eind[1+eptr[i]:eptr[i+1]]  # ∀ n ∈ e
-      append!(toSend[n ÷ nChunks + 1], i-1+elmdist[r+1], n)
+      append!(toSend[toProc(nn, n, nMin) + 1], i-1+elmdist[r+1], n)
     end 
   end 
   #@info toSend
@@ -358,10 +248,9 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     @info "first AlltoAllv finished"
   end
   #@info toRecv
-  startIndex = nChunks * r 
-  endIndex = startIndex + nChunks - 1
+  startIndex, endIndex , sizeChunk = tile(nn, T(r), nMin)
   n2e = [Vector{T}() for _ in  startIndex:endIndex]
-  @info "indexes =", startIndex, ":", endIndex
+  @info startIndex, ":", endIndex
   for i=startIndex:endIndex
     for proc=1:p
       for j=1:2:size(toRecv[proc],1)
@@ -399,19 +288,6 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
        curr += 2 + nNodes 
     end
   end
-  @info  nn2e
-   
-  # build 1-adjacency
-  #for i=1:neLoc # ∀ e local element
-  #  e = i-1+elmdist[r+1]
-  #  for n ∈ eind[1+eptr[i]:eptr[i+1]]  # ∀ n ∈ e
-  #    if (haskey(nn2e, n))
-  #      nn2e[n] = [e]
-  #    else
-  #      union!(nn2e[n],e)
-  #    end
-  #  end 
-  #end
   adj = [Vector{T}() for _ in 1:neLoc]
   for i=1:neLoc # ∀ e local element
     e = i-1+elmdist[r+1]
@@ -423,7 +299,6 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       end 
     end 
   end
-  @info adj 
   if (r == 0)
     @info "1D adjacency finished"
   end
@@ -448,83 +323,5 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     adjp = adj
   end 
   return adjp
-  return []
-end # function
-
-function tile(size_obj, rank) # TODO : parametrize it! 
-  # tiling indexes 
-  p = MPI.Comm_size(MPI.COMM_WORLD)
-  size_chunk = (size_obj - 1) ÷ p + 1
-  mod_chunk = size_obj % p 
-  if (mod_chunk != 0 & (rank + 1 > mod_chunk))
-    size_chunk = size_chunk - 1
-    startIndex = rank * size_chunk + mod_chunk + 1
-  else
-    startIndex = rank * size_chunk + 1
-  end
-  endIndex = startIndex + size_chunk -1
-  return startIndex, endIndex, size_chunk
-end
-
-
-function read_par_mesh(filename, ::Val{D}, baseval) where {D}
-  IndexType = typeof(baseval)
-  @assert Val(D) isa Union{map(x->Val{x},1:3)...}
-  comm = MPI.COMM_WORLD
-  p = MPI.Comm_size(comm)
-  r = MPI.Comm_rank(comm)
-  
-  lines = readlines(filename)
-  lines = lines[map(x-> length(x) > 0 && (x[1] != '#'), lines)] # beware to the '
-  f_s(x) = findall(map(y->occursin(x,y),lines))[1]
-  dim = parse(IndexType,lines[f_s("Dimension")+1])
-  if (r == 0)
-    @info "dim =", dim
-  end
-  @assert  D == dim
-  of_nodes = f_s("Vertices")
-  nb_nodes = parse(IndexType, lines[of_nodes + 1])
-  nodes = zeros(Float64, nb_nodes, dim)
-  for i=1:nb_nodes
-    nodes[i, : ] = map(x->parse(Float64,x), split(lines[of_nodes + 1 + i])[1:end-1])
-  end
-  if (r == 0)
-    @info "nb_nodes=", nb_nodes
-  end
-  if (dim == 2)
-    of_elem = f_s("Triangles")
-  else
-    of_elem = f_s("Tetrahedra")
-  end
-  nb_elem = parse(IndexType, lines[of_elem + 1])
-  if (r == 0)
-    @info "nb_elem=", nb_elem
-  end
-  elmdist  = zeros(IndexType, p+1)
-
-  elements = zeros(IndexType, nb_elem, dim + 1)
-  for i=1:nb_elem
-    elements[i, : ] = map(x->parse(IndexType,x), split(lines[of_elem + 1 + i])[1:dim+1])
-  end
-
-  # build elmdist
-  startIndex, endIndex, _ = tile(nb_elem, 0)
-  elmdist[1] = startIndex - 1
-  elmdist[2] = endIndex
-  for i=2:p
-    startIndex, endIndex, _ = tile(nb_elem, i-1)
-    elmdist[i+1] = elmdist[i] + endIndex-startIndex + 1
-  end 
-  startIndex, endIndex, _ = tile(nb_elem, r)
-  eind = zeros(IndexType, endIndex - startIndex + 1 , dim + 1)
-  for i=startIndex:endIndex 
-    eind[i-startIndex+1,:] =  map(x->parse(IndexType,x), split(lines[of_elem + 1 + i])[1:dim+1])
-  end
-  size_chunk = (nb_elem - 1) ÷ p + 1
-  eptr = [IndexType(0):IndexType(dim+1):IndexType(size_chunk * (dim + 1));]
-  eind = eind'[:]
-  return (eptr, eind, elmdist)
-end
-
+end 
 end # module
-
