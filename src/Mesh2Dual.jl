@@ -2,7 +2,7 @@ module Mesh2Dual
 
 using MPI
 using Revise
-
+using Printf
 export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_vector, 
        mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
        dgraph_dual, gen_parts, read_par_mesh, toProc, tile
@@ -218,6 +218,7 @@ dgraph\\_dual\\(;elmdist, eptr, eind, baseval, ncommon, comm)
 computes a distributed dual graph
 """
 function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, baseval::T, ncommon::T, comm::MPI.Comm) where {T}
+  t₀ = time()
   r = MPI.Comm_rank(comm)
   p = MPI.Comm_size(comm)
   ne = elmdist[p+1]
@@ -242,39 +243,43 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       append!(toSend[toProc(nn, n, nMin) + 1], i-1+elmdist[r+1], n)
     end 
   end 
-  #@info toSend
   toRecv = send_lists(toSend)
-  if (r == 0)
-    @info "first AlltoAllv finished"
-  end
-  #@info toRecv
+  t0 =time()
   startIndex, endIndex , sizeChunk = tile(nn, T(r), nMin)
   n2e = [Vector{T}() for _ in  startIndex:endIndex]
-  @info startIndex, ":", endIndex
+  n2p = [ Vector{T}() for  _ in startIndex:endIndex]
+  println("nodes range : [$startIndex, $endIndex]")
   for i=startIndex:endIndex
+    isInp = fill(false, p)
+    print("\r$(convert(Int64, floor((i-startIndex)*100. / (endIndex - startIndex))))%")
     for proc=1:p
       for j=1:2:size(toRecv[proc],1)
-        if (toRecv[proc][j+1] == i)
-          append!(n2e[i-startIndex+1],toRecv[proc][j], proc-1)
+        if (toRecv[proc][j+1] == i) # remember , we stored (e,n) couples
+          append!(n2e[i-startIndex+1],toRecv[proc][j])
+          if !isInp[proc] 
+            isInp[proc] = true
+            append!(n2p[i-startIndex+1], proc-1)
+          end
         end
       end 
     end
   end
-  #@info n2e
+  t1 = time() - t0;
+  @printf "\ntps build for n2e %.3e\n" t1
+  t0 = time()
   toSend = [ Vector{T}() for _ in 1:p]
   for i=startIndex:endIndex
-     for proc=1:p
+    for proc in n2p[i-startIndex+1]
        eᵢ = n2e[i-startIndex+1]
-       if (proc-1 in eᵢ[2:2:end])
-         append!(toSend[proc],i,length(eᵢ[1:2:end]), eᵢ[1:2:end]...)
-       end 
+       append!(toSend[proc+1],i,length(eᵢ[1:end]), eᵢ[1:end]...)
      end
   end
+  t1 = time() - t0;
+  @printf "tps build for toSend %.3e\n" t1
+  t0 = time()
   toRecv = send_lists(toSend)
-  if (r == 0)
-    @info "second AlltoAllv finished"
-  end
-  #@info toRecv
+  t1 = time() - t0;
+  @printf "tps second All2All %.3e\n" t1
   nn2e = Dict{T,Vector{T}}()
   for proc=1:p
     curr = 1 
@@ -322,6 +327,9 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   else
     adjp = adj
   end 
+  if (r == 0)
+    @printf "total time = %.3e\n"  (time() - t₀)
+  end
   return adjp
 end 
 end # module
