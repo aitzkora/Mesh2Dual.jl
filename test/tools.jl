@@ -30,5 +30,38 @@ for k=1:8
   #println("$k -> $(toProc(nMax,k))")
   @test toProc(nMax,k) == toProcCheck[k]
 end
+
+# send_lists
+
+@assert size == 3
+if rank == 0
+  verttab = [0, 0, 2, 5]
+  edgetab = [1, 2, 3, 4, 5]
+elseif rank == 1
+  verttab = [0, 1, 1, 4] 
+  edgetab = [6, 7, 8, 9]
+elseif rank == 2
+  verttab = [0, 1, 3, 3]
+  edgetab = [10, 11, 12]
+end
+
+# do the transpose
+verttab_t, edgetab_t = send_lists(verttab, edgetab)
+
+if rank == 0
+  verttab_c = [0, 0, 1, 2]
+  edgetab_c = [6, 10]
+elseif rank == 1
+  verttab_c = [0, 2, 2, 4] 
+  edgetab_c = [1, 2, 11,12]
+elseif rank == 2
+  verttab_c = [0, 3, 6, 6]
+  edgetab_c = [3, 4, 5, 7, 8, 9]
+end
+@test verttab_c == verttab_t
+@test edgetab_c == edgetab_t
+
+MPI.Finalize()
+@test MPI.Finalized()
 MPI.Finalize()
 @test MPI.Finalized()

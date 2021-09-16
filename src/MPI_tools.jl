@@ -1,13 +1,37 @@
-function send_lists(vec::Vector{Vector{T}}) where T
-  send_counts = T[length(i) for i in vec]
+"""
+listToCsr(vec::Vector{Vector{T}}) where {T:<Int}
+
+converts a list of list to CSR format
+"""
+
+function listToCsr(vec::Vector{Vector{T}}) where {T}
+  eptr = T[0]
+  eind = T[] 
+  for (i, e) in enumerate(vec)
+      append!(eptr, eptr[i]+length(e))
+      append!(eind, e)
+  end
+  return (eptr, eind)
+end 
+
+"""
+function send_lists(verttab::Vector{T}, edgetab::Vector{T}) where T
+
+do a MPI_AlltoAllv with a CSR graph
+
+"""
+function send_lists(verttab::Vector{T}, edgetab::Vector{T}) where T
   comm = MPI.COMM_WORLD
-  recv_counts = fill(T(0), MPI.Comm_size(comm))
+  p = MPI.Comm_size(comm)
+  send_counts = diff(verttab)
+  @assert size(send_counts, 1) == p
+  recv_counts = fill(T(0), p)
   MPI.Alltoall!(UBuffer(send_counts, 1), UBuffer(recv_counts, 1), comm)
   recv = fill(T(0), sum(recv_counts))
-  send_vec = collect(Iterators.flatten([v[:] for v in vec]))
-  MPI.Alltoallv!(VBuffer(send_vec, send_counts), VBuffer(recv, recv_counts), comm)
-  displs = cumsum(recv_counts)
-  recv_vec = pushfirst!([recv[range(i...)] for i in zip(displs[1:end-1].+1,displs[2:end])], recv[1:recv_counts[1]])
+  MPI.Alltoallv!(VBuffer(edgetab, send_counts), VBuffer(recv, recv_counts), comm)
+  verttab_t = pushfirst!(accumulate(+, recv_counts), T(0))
+  edgetab_t = recv
+  return verttab_t, edgetab_t
 end
 
 """

@@ -6,7 +6,6 @@ MPI.Init()
 comm = MPI.COMM_WORLD
 size = MPI.Comm_size(comm)
 rank = MPI.Comm_rank(comm)
-root = 0
 
 @assert size == 3
 eptr = Int32[]

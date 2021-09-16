@@ -5,7 +5,7 @@ using Revise
 using Printf
 export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_vector, 
        mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
-       dgraph_dual, gen_parts, read_par_mesh, toProc, tile
+       dgraph_dual, gen_parts, read_par_mesh, toProc, tile, send_lists
 
 
 include("MPI_tools.jl")
@@ -243,22 +243,24 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       append!(toSend[toProc(nn, n, nMin) + 1], i-1+elmdist[r+1], n)
     end 
   end 
-  toRecv = send_lists(toSend)
+    
+  verttab_s, edgetab_s = listToCsr(toSend)
+  verttab, edgetab = send_lists(verttab_s, edgetab_s)
   t0 =time()
   startIndex, endIndex , sizeChunk = tile(nn, T(r), nMin)
   n2e = [Vector{T}() for _ in  startIndex:endIndex]
   n2p = [ Vector{T}() for  _ in startIndex:endIndex]
   println("nodes range : [$startIndex, $endIndex]")
-  for i=startIndex:endIndex
+  @inbounds for i=startIndex:endIndex
     isInp = fill(false, p)
-    print("\r$(convert(Int64, floor((i-startIndex)*100. / (endIndex - startIndex))))%")
+    #print("\r$(convert(Int64, floor((i-startIndex)*100. / (endIndex - startIndex))))%")
     for proc=1:p
-      for j=1:2:size(toRecv[proc],1)
-        if (toRecv[proc][j+1] == i) # remember , we stored (e,n) couples
-          append!(n2e[i-startIndex+1],toRecv[proc][j])
+      @inbounds for j=1+verttab[proc]:2:verttab[proc+1]
+        if (edgetab[j+1] == i) # remember , we stored (e,n) couples
+           append!(n2e[i-startIndex+1],edgetab[j])
           if !isInp[proc] 
             isInp[proc] = true
-            append!(n2p[i-startIndex+1], proc-1)
+             append!(n2p[i-startIndex+1], proc-1)
           end
         end
       end 
@@ -269,29 +271,29 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   t0 = time()
   toSend = [ Vector{T}() for _ in 1:p]
   for i=startIndex:endIndex
+    eᵢ= n2e[i-startIndex+1]
     for proc in n2p[i-startIndex+1]
-       eᵢ = n2e[i-startIndex+1]
-       append!(toSend[proc+1],i,length(eᵢ[1:end]), eᵢ[1:end]...)
-     end
+      append!(toSend[proc+1],i,length(eᵢ[1:end]), eᵢ[1:end]...)
+    end
   end
+  verttab, edgetab = listToCsr(toSend)
   t1 = time() - t0;
   @printf "tps build for toSend %.3e\n" t1
   t0 = time()
-  toRecv = send_lists(toSend)
+  verttab_t, edgetab_t = send_lists(verttab, edgetab)
   t1 = time() - t0;
   @printf "tps second All2All %.3e\n" t1
   nn2e = Dict{T,Vector{T}}()
   for proc=1:p
-    curr = 1 
-    nCurr = length(toRecv[proc]) 
-    while curr <= nCurr
-       currNode = toRecv[proc][curr]
-       nNodes = toRecv[proc][curr+1]
-       if !haskey(nn2e, currNode) 
-         nn2e[currNode] = toRecv[proc][curr+2:curr+1+nNodes]
-       end 
-       curr += 2 + nNodes 
-    end
+      curr = 1+verttab_t[proc]
+      while curr < verttab_t[proc+1]
+         currNode = edgetab_t[curr]
+         nNodes = edgetab_t[curr+1]
+         if !haskey(nn2e, currNode) 
+           nn2e[currNode] = edgetab_t[curr+2:curr+1+nNodes]
+         end 
+         curr += 2 + nNodes 
+      end
   end
   adj = [Vector{T}() for _ in 1:neLoc]
   for i=1:neLoc # ∀ e local element
