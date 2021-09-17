@@ -295,7 +295,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   @printf "tps second nn2e %.3e\n" time()-t0
   # build 1-adjacency
   t0 = time()
-  adj = [Vector{T}() for _ in 1:neLoc]
+  adj = [Set{T}() for _ in 1:neLoc]
   for i=1:neLoc 
     e = i-1+elmdist[r+1]
     for n ∈ eind[1+eptr[i]:eptr[i+1]]  
@@ -306,10 +306,11 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       end 
     end 
   end
+  adj = map(x->[ i for i in x], adj)
   @printf "tps 1D adjacency %.3e\n"  time() - t0
   if (ncommon > 1) 
     t0 = time()
-    adjp = [Vector{T}() for _ in 1:neLoc]
+    adjp = [Set{T}() for _ in 1:neLoc]
     for i=1:neLoc
       accu = fill(T(0), length(adj[i]))
       for n ∈ eind[1+eptr[i]:eptr[i+1]] 
@@ -326,6 +327,9 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       end
     end 
     @printf "tps n-D adjacency %.3e\n"  time() - t0
+    t0 = time()
+    adjp = map(x->[i for i in x], adjp)
+    @printf "tps cvs Set->adj n-D%.3e\n"  time() - t0
   else
     adjp = adj
   end 
