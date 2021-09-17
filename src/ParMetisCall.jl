@@ -33,6 +33,7 @@ function parmetis_mesh_to_dual(;elmdist::Array{T,1},
     @debug "PARMETIS_MeshToDual Pointer", mesh_to_dual_ptr
     r_xadj = Ref{Ptr{T}}()
     r_adjncy = Ref{Ptr{T}}()
+    t₀ = time()
     ccall(mesh_to_dual_ptr, Cvoid, 
           (Ptr{T}, Ptr{T}, Ptr{T}, Ref{T}, Ref{T}, Ref{Ptr{T}}, Ref{Ptr{T}}, Ref{MPI.Comm}),
           elmdist,
@@ -44,6 +45,7 @@ function parmetis_mesh_to_dual(;elmdist::Array{T,1},
           r_adjncy,
           Ref{MPI.Comm}(comm)
          )
+    @printf "total time = %.3e\n"  (time() - t₀)
     rank = MPI.Comm_rank(comm)
     ne_local = elmdist[rank+2]-elmdist[rank+1]
     x_adj = GC.@preserve r_xadj [unsafe_load(r_xadj[] ,i) for i=1:ne_local+1]

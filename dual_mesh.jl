@@ -29,8 +29,6 @@ else
 end
 println("I'm $rank, nodes ∈ [$(minimum(eind)), $(maximum(eind))]")
 println("I'm $rank, elements ∈ [$(elmdist[rank+1]), $(elmdist[rank+2])]")
-#println("I'm $rank, eptr = $(eptr)")
-#println("I'm $rank, eind = $(eind)")
 # call parmetis
 if (rank == 0)
   print_rgb(200, 0, 200, "computing dual mesh by parmetis\n")

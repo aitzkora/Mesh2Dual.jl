@@ -250,21 +250,15 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   startIndex, endIndex , sizeChunk = tile(nn, T(r), nMin)
   n2e = [Vector{T}() for _ in  startIndex:endIndex]
   n2p = [ Vector{T}() for  _ in startIndex:endIndex]
+  #frsttab = zeros(T, sizeChunk, 2)
+  #frsttab[:, 2] = -one(T)
   println("nodes range : [$startIndex, $endIndex]")
-  @inbounds for i=startIndex:endIndex
-    isInp = fill(false, p)
-    #print("\r$(convert(Int64, floor((i-startIndex)*100. / (endIndex - startIndex))))%")
-    for proc=1:p
-      @inbounds for j=1+verttab[proc]:2:verttab[proc+1]
-        if (edgetab[j+1] == i) # remember , we stored (e,n) couples
-           append!(n2e[i-startIndex+1],edgetab[j])
-          if !isInp[proc] 
-            isInp[proc] = true
-             append!(n2p[i-startIndex+1], proc-1)
-          end
-        end
-      end 
-    end
+  for proc=1:p
+    @inbounds for j=1+verttab[proc]:2:verttab[proc+1]
+       node = edgetab[j+1]
+       push!(n2e[node-startIndex+1], edgetab[j])
+       union!(n2p[node-startIndex+1], proc-1)
+    end 
   end
   t1 = time() - t0;
   @printf "\ntps build for n2e %.3e\n" t1
@@ -283,6 +277,9 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   verttab_t, edgetab_t = send_lists(verttab, edgetab)
   t1 = time() - t0;
   @printf "tps second All2All %.3e\n" t1
+  #
+  # build nn2
+  t0 = time()
   nn2e = Dict{T,Vector{T}}()
   for proc=1:p
       curr = 1+verttab_t[proc]
@@ -295,10 +292,13 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
          curr += 2 + nNodes 
       end
   end
+  @printf "tps second nn2e %.3e\n" time()-t0
+  # build 1-adjacency
+  t0 = time()
   adj = [Vector{T}() for _ in 1:neLoc]
-  for i=1:neLoc # ∀ e local element
+  for i=1:neLoc 
     e = i-1+elmdist[r+1]
-    for n ∈ eind[1+eptr[i]:eptr[i+1]]  # ∀ n ∈ e
+    for n ∈ eind[1+eptr[i]:eptr[i+1]]  
       for e₂ ∈ nn2e[n]
         if (e₂ ≠ e)
           union!(adj[i], e₂)
@@ -306,10 +306,9 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       end 
     end 
   end
-  if (r == 0)
-    @info "1D adjacency finished"
-  end
+  @printf "tps 1D adjacency %.3e\n"  time() - t0
   if (ncommon > 1) 
+    t0 = time()
     adjp = [Vector{T}() for _ in 1:neLoc]
     for i=1:neLoc
       accu = fill(T(0), length(adj[i]))
@@ -326,6 +325,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
         end
       end
     end 
+    @printf "tps n-D adjacency %.3e\n"  time() - t0
   else
     adjp = adj
   end 

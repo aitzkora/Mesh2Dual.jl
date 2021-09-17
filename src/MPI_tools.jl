@@ -30,8 +30,7 @@ function send_lists(verttab::Vector{T}, edgetab::Vector{T}) where T
   recv = fill(T(0), sum(recv_counts))
   MPI.Alltoallv!(VBuffer(edgetab, send_counts), VBuffer(recv, recv_counts), comm)
   verttab_t = pushfirst!(accumulate(+, recv_counts), T(0))
-  edgetab_t = recv
-  return verttab_t, edgetab_t
+  return verttab_t, recv
 end
 
 """
