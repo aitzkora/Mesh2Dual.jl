@@ -244,30 +244,53 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     end 
   end 
     
+  t0 = time()
   verttab_s, edgetab_s = listToCsr(toSend)
+  @printf "tps first listToCsr %.3e\n" time() - t0
+  t0 = time()
   verttab, edgetab = send_lists(verttab_s, edgetab_s)
+  @printf "tps first All2All %.3e\n" time() - t0
   t0 =time()
   startIndex, endIndex , sizeChunk = tile(nn, T(r), nMin)
   n2e = [Vector{T}() for _ in  startIndex:endIndex]
   n2p = [ Vector{T}() for  _ in startIndex:endIndex]
-  #frsttab = zeros(T, sizeChunk, 2)
-  #frsttab[:, 2] = -one(T)
   println("nodes range : [$startIndex, $endIndex]")
+  frsttab = fill(zero(T), 2 * sizeChunk)
+  frsttab[2:2:2*sizeChunk] .= -one(T)
   for proc=1:p
     @inbounds for j=1+verttab[proc]:2:verttab[proc+1]
        node = edgetab[j+1]
-       push!(n2e[node-startIndex+1], edgetab[j])
-       union!(n2p[node-startIndex+1], proc-1)
+       nodex = node-startIndex+1
+       union!(n2p[nodex], proc-1)
+       frsttab[2*(nodex-1)+1] += one(T)
+       if (frsttab[2*nodex] == -one(T))
+         edgetab[j+1] = -one(T)
+       else
+         edgetab[j+1] = frsttab[2*nodex]
+       end
+       frsttab[2*nodex] = j
     end 
   end
-  t1 = time() - t0;
-  @printf "\ntps build for n2e %.3e\n" t1
+  totSize = sum(frsttab[1:2:2*sizeChunk])
+  n2eptr = T[zero(T)]
+  n2etab = fill(zero(T), totSize)
+  curr = 0 
+  for j=1:sizeChunk
+    w = frsttab[2*j]
+    while w != -one(T)
+      n2etab[curr+1] = edgetab[w]
+      curr += 1
+      w = edgetab[w+1]
+    end
+    push!(n2eptr, curr)
+  end
+  @printf "tps build for n2e %.3e\n" time() - t0
   t0 = time()
   toSend = [ Vector{T}() for _ in 1:p]
-  for i=startIndex:endIndex
-    eᵢ= n2e[i-startIndex+1]
-    for proc in n2p[i-startIndex+1]
-      append!(toSend[proc+1],i,length(eᵢ[1:end]), eᵢ[1:end]...)
+  map(x->sizehint!(x,totSize + 2*sizeChunk), toSend) # not give a significant reduction of CPU time
+  for i=1:sizeChunk
+    for proc in n2p[i]
+      push!(toSend[proc+1],i+startIndex-1, n2eptr[i+1]-n2eptr[i], n2etab[1+n2eptr[i]:n2eptr[i+1]]...)
     end
   end
   verttab, edgetab = listToCsr(toSend)
@@ -301,7 +324,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     for n ∈ eind[1+eptr[i]:eptr[i+1]]  
       for e₂ ∈ nn2e[n]
         if (e₂ ≠ e)
-          union!(adj[i], e₂)
+          push!(adj[i], e₂)
         end  
       end 
     end 
@@ -316,13 +339,13 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       for n ∈ eind[1+eptr[i]:eptr[i+1]] 
         for (j,e₂) ∈ enumerate(adj[i])
           if ( (e₂ ∈ nn2e[n]) & (e₂ ≠ ((i-1) + elmdist[r+1] )))
-              accu[j] += 1
+            accu[j] += 1
           end 
         end
       end 
       for (j,e₂) ∈ enumerate(adj[i])
         if (accu[j] >= ncommon)
-          union!(adjp[i], e₂)
+          push!(adjp[i], e₂)
         end
       end
     end 
