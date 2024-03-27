@@ -87,9 +87,15 @@ end
 
 f1 = parse_file_name(ARGS[1])
 f2 = parse_file_name(ARGS[2])
+if (isempty(f1))
+    println(ARGS[1]* " is not in the current dir !"); exit(-1)
+end 
+if (isempty(f2))
+    println(ARGS[2]* " is not in the current dir !"); exit(-1)
+end 
+
 if (length(f1) != length(f2))
-    println("two generic filenames do not have the same number of processes")
-    exit(-1)
+    println("two generic filenames do not have the same number of processes"); exit(-1)
 else
     for i=1:length(f1)
         check(f1[i], f2[i])
