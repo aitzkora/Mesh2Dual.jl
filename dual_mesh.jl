@@ -1,52 +1,59 @@
 using Mesh2Dual
 using MPI
 using Test
+using Printf
+using DelimitedFiles
 
 MPI.Init()
 comm = MPI.COMM_WORLD
-size = MPI.Comm_size(comm)
 rank = MPI.Comm_rank(comm)
 root = 0
-# taken from SO (https://stackoverflow.com/questions/27929766/how-to-print-text-with-a-specified-rgb-value-in-julia)
-function print_rgb(r, g, b, t)
-  print("\e[1m\e[38;2;$r;$g;$b;249m",t)
-end
-
 if (rank == 0)
-  print_rgb(200, 0, 200, "loading mesh\n")
+  println("loading mesh")
 end
 if (length(ARGS) >= 2)
   filename = ARGS[1]
-  dim = parse(Int64, ARGS[2])
 else
   filename ="cube.1.mesh" 
-  dim = 3
 end
-if (dim == 2)
-  eptr, eind, elmdist  = read_par_mesh(filename, Val(2), Int32(0)) 
-else
-  eptr, eind, elmdist  = read_par_mesh(filename, Val(3), Int32(0)) 
-end
+dim, eptr, eind, elmdist  = read_par_mesh(filename, Int32(0)) 
+#map([(eptr, "eptr.$rank"), (eind, "eind.$rank"), (elmdist, "elmdist.$rank")])  do x
+#  io = open(x[2], "w")
+#  writedlm(io,x[1])
+#end
+io = open("eptr.$rank", "w")
+writedlm(io, eptr)
+@info "eptr_size=", size(eptr,1)
+io = open("eind.$rank", "w")
+writedlm(io, eind)
+io = open("elmdist.$rank", "w")
+writedlm(io, elmdist)
 println("I'm $rank, nodes ∈ [$(minimum(eind)), $(maximum(eind))]")
 println("I'm $rank, elements ∈ [$(elmdist[rank+1]), $(elmdist[rank+2])]")
 # call parmetis
 if (rank == 0)
-  print_rgb(200, 0, 200, "computing dual mesh by parmetis\n")
+  println("computing dual mesh by parmetis")
 end
-xadj, adjcy = parmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), 
-                                    comm = comm)
+t0 = time()
+xadj, adjcy = parmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), comm = comm)
+@printf "tps parmetis %.3e\n" time() - t0
 adj_check = metis_fmt_to_vector(xadj, adjcy, Int32(0))
-# our algorithm
+# call ptscotchparmetis
+# our algorithm in pure julia
 if (rank == 0)
-  print_rgb(200,0, 200, "computing dual mesh by our algorithm\n")
+  println("computing dual mesh by scotchparmetis")
 end
-adj = dgraph_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), comm = comm) 
+t0 = time()
+xadj2, adjcy2 = ptscotchparmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), comm = comm)
+@printf "tps ptscotchparmetis %.3e\n" time() - t0
+adj2_check = metis_fmt_to_vector(xadj2, adjcy2, Int32(0))
+
 if (rank == 0)
-  print_rgb(200, 0, 200, "checking")
+  println("checking")
 end
-@test length(adj) == length(adj_check)
-for i=1:length(adj)
-  @test sort(adj[i]) == sort(adj_check[i])
+@test length(adj_check) == length(adj_check)
+for i=1:length(adj_check)
+  @test sort(adj_chek[i]) == sort(adj_check)
 end
 MPI.Finalize()
 @test MPI.Finalized()

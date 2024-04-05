@@ -3,13 +3,16 @@ module Mesh2Dual
 using MPI
 using Revise
 using Printf
-export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_vector, 
+using Libdl
+export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_vector, Dgraph_header,
        mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
-       dgraph_dual, gen_parts, read_par_mesh, toProc, tile, send_lists
+       dgraph_dual, gen_parts, read_par_mesh, toProc, tile, send_lists, ptscotchparmetis_mesh_to_dual,
+       write_par_dmesh, write_par_dgraph, shift_msh, list_to_csr, read_dgraph_header, read_adj, read_dmesh, parse_file_name
 
 
 include("MPI_tools.jl")
-# to read mesh
+include("misc.jl")
+include("graphIO.jl")
 include("meshIO.jl")
 
 """
@@ -124,6 +127,21 @@ function mesh_to_metis_fmt(m::Mesh{T}) where {T}
 end 
 
 """
+list\\_to\\_metis\\_fmt(adj::Mesh)
+converts a Mesh struct to a adjacency list defining a Metis Mesh
+i.e : nodes indexes must start to zero for metis
+"""
+function list_to_csr(adj::Vector{Vector{T}}) where {T}
+    xadj = T[0]
+    adjncy = T[] 
+    for (i, e) in enumerate(adj)
+        append!(xadj, xadj[i]+length(e))
+        append!(adjncy, e)
+    end
+    return (xadj, adjncy)
+end 
+
+"""
 mesh\\_to\\_scotch\\_fmt(m::Mesh)
 
 converts a mesh to the SCOTCH format (i.e. a bipartite graph)
@@ -225,55 +243,64 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   neLoc = elmdist[r+2]-elmdist[r+1]
 
   nMax = Ref{T}(maximum(eind))
-  e2n = [Vector{T}() for _ in 1:neLoc]
   MPI.Allreduce!(nMax, MPI.MAX, comm)
   nMin = Ref{T}(minimum(eind))
   MPI.Allreduce!(nMin, MPI.MIN, comm)
   nn = nMax[] - nMin[] + T(1)
   nMin = nMin[]
-  if r == 0
-    @info "nn, nMax, nMin :" , nn, nMax[], nMin
-  end
-  nChunks= nn ÷ p
-  @info "nn :", nn
-  @info "nChunks :", nChunks
+  nMax = nMax[]
   toSend = [ Vector{T}() for _ in 1:p]
   for i=1:neLoc # ∀ e local element
     for n ∈ eind[1+eptr[i]:eptr[i+1]]  # ∀ n ∈ e
-      append!(toSend[toProc(nn, n, nMin) + 1], i-1+elmdist[r+1], n)
+      append!(toSend[toProc(nMax, n, nMin) + 1], i-1+elmdist[r+1], n)
     end 
   end 
-    
   t0 = time()
   verttab_s, edgetab_s = listToCsr(toSend)
-  @printf "tps first listToCsr %.3e\n" time() - t0
   t0 = time()
   verttab, edgetab = send_lists(verttab_s, edgetab_s)
-  @printf "tps first All2All %.3e\n" time() - t0
-  t0 =time()
-  startIndex, endIndex , sizeChunk = tile(nn, T(r), nMin)
-  n2e = [Vector{T}() for _ in  startIndex:endIndex]
-  n2p = [ Vector{T}() for  _ in startIndex:endIndex]
-  println("nodes range : [$startIndex, $endIndex]")
+  #@printf "tps first All2All %.3e\n" time() - t0
+  t0 = time()
+  #@info "apres envoi", verttab, edgetab
+  startIndex, endIndex , sizeChunk = tile(nMax, T(r), nMin)
+  # n2p[idx] will contain the list of procs containing the node idx
+  n2p = [ Vector{T}() for _ in startIndex:endIndex ]
+  println("nodes range : [$startIndex, $endIndex], $sizeChunk")
   frsttab = fill(zero(T), 2 * sizeChunk)
   frsttab[2:2:2*sizeChunk] .= -one(T)
+  # frsttab [2i] will have the value :
+  #   - -1 if node i does not appear
+  #   - the adress j in edgetab where to start the linked list of elements containing i
+  # frstab [2i+1] will store  how many elements contain i
+  # egdetab and frsttab will implement a linked list following the scheme
+  # frsttab : .... | n_j ,  j |  
+  #                | 2k+1,  2k|
+  #                         |
+  #                  ┌──────┘ 
+  #                  | 
+  #                  v
+  # edgetab : ...  | e_j,  z |       | e_z, -1 | # -1 indicates the end of the linking process
+  #                | j  , j+1|       | z  , z+1| 
+  #                        |           ∧  
+  #                        └───────────┘
   for proc=1:p
     @inbounds for j=1+verttab[proc]:2:verttab[proc+1]
-       node = edgetab[j+1]
-       nodex = node-startIndex+1
-       union!(n2p[nodex], proc-1)
-       frsttab[2*(nodex-1)+1] += one(T)
+       node = edgetab[j+1] # node global number included in proc
+       nodex = node-startIndex+1 # local numerotation
+       union!(n2p[nodex], proc-1) # acts like an hashtable
+       frsttab[2*(nodex-1)+1] += one(T) 
        if (frsttab[2*nodex] == -one(T))
          edgetab[j+1] = -one(T)
        else
          edgetab[j+1] = frsttab[2*nodex]
        end
-       frsttab[2*nodex] = j
+       frsttab[2*nodex] = j # pointer on edgetab
     end 
   end
-  totSize = sum(frsttab[1:2:2*sizeChunk])
+  totSize = sum(frsttab[1:2:2*sizeChunk]) # sum the effectives of each node
   n2eptr = T[zero(T)]
   n2etab = fill(zero(T), totSize)
+  # we will build a csr list (n2eptr,n2etab) which contains list of elements containing nodes
   curr = 0 
   for j=1:sizeChunk
     w = frsttab[2*j]
@@ -282,10 +309,8 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       curr += 1
       w = edgetab[w+1]
     end
-    push!(n2eptr, curr)
+    push!(n2eptr, curr) # neptr contains the the index of the csr list in n2etab
   end
-  @printf "tps build for n2e %.3e\n" time() - t0
-  t0 = time()
   toSend = [ Vector{T}() for _ in 1:p]
   map(x->sizehint!(x,totSize + 2*sizeChunk), toSend) # not give a significant reduction of CPU time
   for i=1:sizeChunk
@@ -294,30 +319,22 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     end
   end
   verttab, edgetab = listToCsr(toSend)
-  t1 = time() - t0;
-  @printf "tps build for toSend %.3e\n" t1
-  t0 = time()
   verttab_t, edgetab_t = send_lists(verttab, edgetab)
-  t1 = time() - t0;
-  @printf "tps second All2All %.3e\n" t1
-  #
   # build nn2
-  t0 = time()
+  # nn2e is an hashmap containing the list of edges which contains n
   nn2e = Dict{T,Vector{T}}()
   for proc=1:p
-      curr = 1+verttab_t[proc]
-      while curr < verttab_t[proc+1]
-         currNode = edgetab_t[curr]
-         nNodes = edgetab_t[curr+1]
-         if !haskey(nn2e, currNode) 
-           nn2e[currNode] = edgetab_t[curr+2:curr+1+nNodes]
-         end 
-         curr += 2 + nNodes 
-      end
+    curr = 1+verttab_t[proc]
+    while curr < verttab_t[proc+1]
+      currNode = edgetab_t[curr]
+      nNodes = edgetab_t[curr+1]
+      if !haskey(nn2e, currNode) 
+        nn2e[currNode] = edgetab_t[curr+2:curr+1+nNodes]
+      end 
+      curr += 2 + nNodes 
+    end
   end
-  @printf "tps second nn2e %.3e\n" time()-t0
   # build 1-adjacency
-  t0 = time()
   adj = [Set{T}() for _ in 1:neLoc]
   for i=1:neLoc 
     e = i-1+elmdist[r+1]
@@ -330,7 +347,6 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     end 
   end
   adj = map(x->[ i for i in x], adj)
-  @printf "tps 1D adjacency %.3e\n"  time() - t0
   if (ncommon > 1) 
     t0 = time()
     adjp = [Set{T}() for _ in 1:neLoc]
@@ -338,7 +354,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       accu = fill(T(0), length(adj[i]))
       for n ∈ eind[1+eptr[i]:eptr[i+1]] 
         for (j,e₂) ∈ enumerate(adj[i])
-          if ( (e₂ ∈ nn2e[n]) & (e₂ ≠ ((i-1) + elmdist[r+1] )))
+          if ((e₂ ∈ nn2e[n]) & (e₂ ≠ ((i-1) + elmdist[r+1] )))
             accu[j] += 1
           end 
         end
@@ -349,16 +365,10 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
         end
       end
     end 
-    @printf "tps n-D adjacency %.3e\n"  time() - t0
-    t0 = time()
     adjp = map(x->[i for i in x], adjp)
-    @printf "tps cvs Set->adj n-D%.3e\n"  time() - t0
   else
     adjp = adj
   end 
-  if (r == 0)
-    @printf "total time = %.3e\n"  (time() - t₀)
-  end
   return adjp
 end 
 end # module

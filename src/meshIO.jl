@@ -1,18 +1,36 @@
-function read_par_mesh(filename, ::Val{D}, baseval) where {D}
+function parse_file_name(str)
+  pattern_rng = findfirst("%r", str)
+  if isnothing(pattern_rng)
+    @warn "file $str does not contains %r"
+    return
+  end
+  fst_part = str[1:pattern_rng[1]-1]
+  snd_part = str[pattern_rng[2]+1:end]
+  p = 0
+  files = String[] 
+  for s in readdir() # FIXME : works only in current dir
+      rx = Regex(fst_part*"(\\d)+"*snd_part)
+      mx = match(rx,s)
+      if !isnothing(mx)
+          p+=1
+          push!(files, fst_part*mx.captures[1]*snd_part)
+      end
+  end   
+  return files
+end
+
+function read_par_mesh(filename, baseval)
   IndexType = typeof(baseval)
-  @assert Val(D) isa Union{map(x->Val{x},1:3)...}
   comm = MPI.COMM_WORLD
   p = MPI.Comm_size(comm)
   r = MPI.Comm_rank(comm)
-  
   lines = readlines(filename)
-  lines = lines[map(x-> length(x) > 0 && (x[1] != '#'), lines)] # beware to the '
+  lines = lines[map(x-> length(x) > 0 && (x[1] != '#'), lines)]
   f_s(x) = findall(map(y->occursin(x,y),lines))[1]
   dim = parse(IndexType,lines[f_s("Dimension")+1])
   if (r == 0)
     @info "dim =", dim
   end
-  @assert  D == dim
   of_nodes = f_s("Vertices")
   nb_nodes = parse(IndexType, lines[of_nodes + 1])
   nodes = zeros(Float64, nb_nodes, dim)
@@ -33,7 +51,6 @@ function read_par_mesh(filename, ::Val{D}, baseval) where {D}
     @info "nb_elem=", nb_elem
   end
   elmdist  = zeros(IndexType, p+1)
-
   elements = zeros(IndexType, nb_elem, dim + 1)
   for i=1:nb_elem
     elements[i, : ] = map(x->parse(IndexType,x), split(lines[of_elem + 1 + i])[1:dim+1])
@@ -58,7 +75,7 @@ function read_par_mesh(filename, ::Val{D}, baseval) where {D}
   end
   eptr = [IndexType(0):IndexType(dim+1):IndexType(sizeChunk * (dim + 1));]
   eind = eind'[:]
-  return (eptr, eind, elmdist)
+  return dim, eptr, eind, elmdist
 end
 
 
@@ -99,15 +116,54 @@ function write_par_dmesh(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, 
   end
   println(io, elmdist[end])
   for i=1:length(eptr)-1
-    print(io, eptr[i+1] - eptr[i], " ")
-    for idx=eptr[i]+1:eptr[i+1]-1
-      print(io, eind[idx], " ")
-    end
-    println(io,eind[eptr[i+1]])
+      print(io, eptr[i+1] - eptr[i], " ")
+      for idx=eptr[i]-baseval+1:eptr[i+1]-baseval-1
+          print(io, eind[idx], " ")
+      end
+      println(io,eind[eptr[i+1]-baseval])
   end
 end
 
-function write_dgraph(;xadj::Vector{T}, adjncy::Vector{T}, elmdist::Vector{T}, baseval::T, comm::MPI.Comm, filename::String) where {T}
+function read_dmesh(x::Val{T}, filename::String) where {T}
+  files = parse_file_name(filename)
+  nb_files = length(files)
+  println("nbprocs = $nb_files")
+  elmlocnum = zeros(T, nb_files)
+  vertlocnum = zeros(T, nb_files)
+  eptr = [T[] for _ in 1:nb_files]
+  eind = [T[] for _ in 1:nb_files]
+  elmdist = []
+  baseval = 0
+  for (i,f) in enumerate(files)
+    fIO = open(f)
+    version = extract!(fIO, 1)[1]
+    procglbnum, proclocnum = extract!(fIO, 2)
+    elmglbnum = extract!(fIO, 1)[1]
+    elmlocnum[i], vertlocnum[i] = extract!(fIO, 2)
+    baseval, chaco = extract!(fIO, 2)   
+    linea = split(readline(fIO))
+    tab= (x->parse(Int32,x)).(linea)
+    elmdist = tab[2:end]
+    elmlocnbr = elmdist[i] - elmdist[i]
+    j = 1 
+    eptr[i] = T[T(baseval)]
+    eind[i] = T[] 
+    while !eof(fIO)
+      linea = split(readline(fIO))
+      tab=(x->parse(Int32,x)).(linea)
+      @assert tab[1] == length(tab[2:end])
+      e = tab[2:end]
+      append!(eptr[i], eptr[i][j]+length(e))
+      append!(eind[i], e)
+      j += 1
+    end
+    close(fIO)
+  end
+  return eptr, eind, elmdist, baseval
+end
+
+function write_par_dgraph(;xadj::Vector{T}, adjncy::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
+  comm = MPI.COMM_WORLD
   size = MPI.Comm_size(comm)
   rank = MPI.Comm_rank(comm)
   io = open(filename * "-$rank" * ".dgr", "w")

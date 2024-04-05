@@ -37,20 +37,17 @@ end
 tile(nMini::T, rank::T; nMini)
 
 computes a partition of \\{nMini...nMax\\}, into p MPI processes
+rank is in [0, nbproc-1]
 """
 
-function tile(nMax::T, rank::T, nMini::T = T(1)) where{T<:Integer}
+function tile(nMax::T, rank::T, nMini::T = T(0)) where{T<:Integer}
   # tiling indexes 
-  p = MPI.Comm_size(MPI.COMM_WORLD)
-  n = nMax - nMini + 1
-  m = convert(T, ceil(n / p))
-  r = convert(T, n % p)
-  if r == T(0) 
-    startIndex = rank * m +  nMini
-    return startIndex, startIndex + m - T(1), m
-  end
-  if rank + T(1) > r
-    m -= 1 
+  p = convert(T, MPI.Comm_size(MPI.COMM_WORLD))
+  n = nMax - nMini + T(1)
+  m = ceil(T, n / p) # could be replace by (n-1)/p + 1
+  r = n % p
+  if (r > T(0) && rank >= r)
+    m = m - 1
     startIndex = rank * m + r + nMini
   else
     startIndex = rank * m + nMini
@@ -60,23 +57,20 @@ function tile(nMax::T, rank::T, nMini::T = T(1)) where{T<:Integer}
 end
 
 """
-toProc(n::T, k::T) where {T<:Integer}
+toProc(n::T, k::T, nMini::T = T(0)) where {T<:Integer}
 
-maps a k index to a proc number belonging to [0, MPI.Comm_size]
+maps a k index in [nMini,nMax] to a proc number belonging to [0, MPI.Comm_size]
 according to the formula taken from "Parallel programming with Coarrays", p. 12
 
 """ 
-function toProc(nMax::T, k::T, nMini::T = T(1)) where {T<:Integer}
+function toProc(nMax::T, k::T, nMini::T = T(0)) where {T<:Integer}
   p = MPI.Comm_size(MPI.COMM_WORLD)
   n = nMax - nMini + 1
   m = convert(T, ceil(n / p))
   r = n % convert(T, p)
-  if r == 0
-    return convert(T, floor((k - nMini) / m))
-  end
-  if k ≤ m * r
-    return convert(T, floor((k - nMini) / m))
+  if (r == 0  || (k-nMini +1) <= m * r)
+    return floor(T, (k - nMini) / m)
   else
-    return convert(T, floor((k - r - nMini) / (m-1)))
-  end
+    return floor(T, (k - r - nMini) / (m-1))
+  end 
 end
