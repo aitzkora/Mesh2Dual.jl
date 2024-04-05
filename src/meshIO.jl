@@ -62,7 +62,27 @@ function read_par_mesh(filename, ::Val{D}, baseval) where {D}
 end
 
 
-function write_msh_par(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, baseval::T, comm::MPI.Comm, filename::String) where {T}
+"""
+shift a mesh by a constant 
+"""
+function shift_msh(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T) where {T}
+  comm = MPI.COMM_WORLD
+  size = MPI.Comm_size(comm)
+  rank = MPI.Comm_rank(comm)
+  elmlocnbr = elmdist[rank+2] - elmdist[rank+1]
+  for i in eachindex(elmdist)
+    elmdist[i] += shift
+  end
+  for i in eachindex(eptr)
+    eptr[i] += shift
+  end
+  for i in eachindex(eind)
+    eind[i] += shift
+  end
+end
+
+function write_par_dmesh(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
+  comm = MPI.COMM_WORLD
   size = MPI.Comm_size(comm)
   rank = MPI.Comm_rank(comm)
   io = open(filename * "-$rank" * ".dmh", "w")
