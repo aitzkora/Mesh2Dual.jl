@@ -80,13 +80,13 @@ end
 
 
 """
-shift a mesh by a constant 
+shift_par_msh!(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T) where {T}
+shifts a mesh in place by a constant 
 """
-function shift_msh(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T) where {T}
+function shift_par_msh!(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T) where {T}
   comm = MPI.COMM_WORLD
   size = MPI.Comm_size(comm)
   rank = MPI.Comm_rank(comm)
-  elmlocnbr = elmdist[rank+2] - elmdist[rank+1]
   for i in eachindex(elmdist)
     elmdist[i] += shift
   end
@@ -95,6 +95,25 @@ function shift_msh(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift:
   end
   for i in eachindex(eind)
     eind[i] += shift
+  end
+end
+
+"""
+shift_msh!(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T) where {T}
+shifts a mesh in place by a constant 
+"""
+function shift_msh!(; eptr::Vector{Vector{T}}, eind::Vector{Vector{T}}, elmdist::Vector{T}, shift::T) where {T}
+  size = length(elmdist) - 1
+  for i in eachindex(elmdist)
+    elmdist[i] += shift
+  end
+  for rank=0:size-1
+    for i in eachindex(eptr[rank+1])
+        eptr[rank+1][i] += shift
+    end
+    for i in eachindex(eind[rank+1])
+        eind[rank+1][i] += shift
+    end
   end
 end
 
@@ -162,6 +181,38 @@ function read_dmesh(x::Val{T}, filename::String) where {T}
   return eptr, eind, elmdist, baseval
 end
 
+"""
+write_dmesh(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
+
+write sequentially a distributed mesh in a file sequence
+"""
+function write_dmesh(;eptr::Vector{Vector{T}}, eind::Vector{Vector{T}}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
+  size = length(elmdist) - 1
+  for rank=0:size-1
+    io = open(filename * "-$rank" * ".dmh", "w")
+    format_version = 0
+    elmlocnbr = elmdist[rank+2] - elmdist[rank+1]
+    println(io, format_version) # write version
+    println(io, size," ", rank) # write procglbnum and procglbnim
+    println(io, elmdist[end]) # write total number of elements 
+    println(io, elmlocnbr, " ", eptr[rank+1][end]) # write local number of elements and size of vertlocnbr
+    println(io, baseval, " 000") # write baseval and chaco code
+    print(io, length(elmdist), " ")
+    for elm=elmdist[1:end-1]
+        print(io, elm," ")
+    end
+    println(io, elmdist[end])
+    for i=1:length(eptr[rank+1])-1
+        print(io, eptr[rank+1][i+1] - eptr[rank+1][i], " ")
+        for idx=eptr[rank+1][i]-baseval+1:eptr[rank+1][i+1]-baseval-1
+            print(io, eind[rank+1][idx], " ")
+        end
+        println(io,eind[rank+1][eptr[rank+1][i+1]-baseval])
+    end
+    close(io)
+  end
+end
+
 function write_par_dgraph(;xadj::Vector{T}, adjncy::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
   comm = MPI.COMM_WORLD
   size = MPI.Comm_size(comm)
@@ -195,5 +246,6 @@ function write_par_dgraph(;xadj::Vector{T}, adjncy::Vector{T}, elmdist::Vector{T
       println(io,0)
     end
   end   
+  close(io) 
 end     
         

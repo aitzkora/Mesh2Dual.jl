@@ -7,7 +7,8 @@ using Libdl
 export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_vector, Dgraph_header,
        mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
        dgraph_dual, gen_parts, read_par_mesh, toProc, tile, send_lists, ptscotchparmetis_mesh_to_dual,
-       write_par_dmesh, write_par_dgraph, shift_msh, list_to_csr, read_dgraph_header, read_adj, read_dmesh, parse_file_name
+       write_par_dmesh, write_par_dgraph, shift_par_msh!, list_to_csr, read_dgraph_header, read_adj, parse_file_name,
+       write_dmesh, shift_msh!, read_dmesh
 
 
 include("MPI_tools.jl")
