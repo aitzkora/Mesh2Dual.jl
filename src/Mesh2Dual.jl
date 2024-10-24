@@ -7,12 +7,12 @@ using Libdl
 export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_vector, Dgraph_header,
        mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
        dgraph_dual, gen_parts, read_par_mesh, toProc, tile, send_lists, ptscotchparmetis_mesh_to_dual,
-       write_par_dmesh, write_par_dgraph, shift_par_msh!, list_to_csr, read_dgraph_header, read_adj, parse_file_name,
-       write_dmesh, shift_msh!, read_dmesh
+       write_par_dmesh, write_par_dgraph, shift_par_msh!, list_to_csr, csr_to_list, read_dgraph_header, read_adj, parse_file_name,
+       write_dmesh, shift_msh!, read_dmesh, read_scotch_mesh
 
 
-include("MPI_tools.jl")
 include("misc.jl")
+include("MPI_tools.jl")
 include("graphIO.jl")
 include("meshIO.jl")
 
@@ -127,20 +127,6 @@ function mesh_to_metis_fmt(m::Mesh{T}) where {T}
     return (eptr, eind, mini_node)
 end 
 
-"""
-list\\_to\\_metis\\_fmt(adj::Mesh)
-converts a Mesh struct to a adjacency list defining a Metis Mesh
-i.e : nodes indexes must start to zero for metis
-"""
-function list_to_csr(adj::Vector{Vector{T}}) where {T}
-    xadj = T[0]
-    adjncy = T[] 
-    for (i, e) in enumerate(adj)
-        append!(xadj, xadj[i]+length(e))
-        append!(adjncy, e)
-    end
-    return (xadj, adjncy)
-end 
 
 """
 mesh\\_to\\_scotch\\_fmt(m::Mesh)
@@ -257,7 +243,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     end 
   end 
   t0 = time()
-  verttab_s, edgetab_s = listToCsr(toSend)
+  verttab_s, edgetab_s = list_to_csr(toSend)
   t0 = time()
   verttab, edgetab = send_lists(verttab_s, edgetab_s)
   #@printf "tps first All2All %.3e\n" time() - t0
@@ -319,7 +305,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
       push!(toSend[proc+1],i+startIndex-1, n2eptr[i+1]-n2eptr[i], n2etab[1+n2eptr[i]:n2eptr[i+1]]...)
     end
   end
-  verttab, edgetab = listToCsr(toSend)
+  verttab, edgetab = list_to_csr(toSend)
   verttab_t, edgetab_t = send_lists(verttab, edgetab)
   # build nn2
   # nn2e is an hashmap containing the list of edges which contains n

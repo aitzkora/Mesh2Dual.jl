@@ -157,16 +157,6 @@ function read_mesh(filename, ::Val{D}) where {D}
   SimplexMesh{D}(nodes, elements)
 end
 
-function adj_to_eptr_eind(adj)
-  eptr = Cint[0]
-  eind = Cint[]
-  for i=1:size(adj,1)
-    append!(eptr, eptr[i] + size(adj[i],1))
-    append!(eind, adj[i])
-  end
-  return eptr, eind
-end
-
 using Libdl: dlopen, dlsym
 function scotch_output_vol(p::Partition)
     if "SCOTCHMETIS_LIB"  in keys(ENV)
@@ -183,7 +173,7 @@ function scotch_output_vol(p::Partition)
     partnbr = maximum(p.npart) + 1
     vertnnd = size(p.epart, 1)
     dual = graph_dual(Mesh([p.triangles[i,:] for i=1:size(p.triangles,1)]),2)
-    eptr, eind = adj_to_eptr_eind(dual.adj)
+    eptr, eind = list_to_csr(dual.adj, Cint)
     @info "vertnnd = ", vertnnd
     @info "partnbr =", partnbr
     ccall(output_vol_ptr, Cint, 

@@ -1,19 +1,13 @@
 """
-listToCsr(vec::Vector{Vector{T}}) where {T:<Int}
-
-converts a list of list to CSR format
+function get_com_size_rank()
+returns the triplet comm, size and rank of MPI : syntastic sugar
 """
-
-function listToCsr(vec::Vector{Vector{T}}) where {T}
-  eptr = T[0]
-  eind = T[] 
-  for (i, e) in enumerate(vec)
-      append!(eptr, eptr[i]+length(e))
-      append!(eind, e)
-  end
-  return (eptr, eind)
-end 
-
+function get_com_size_rank()
+  comm = MPI.COMM_WORLD
+  size = MPI.Comm_size(comm)
+  rank = MPI.Comm_rank(comm)
+  return comm, size, rank
+end
 """
 function send_lists(verttab::Vector{T}, edgetab::Vector{T}) where T
 

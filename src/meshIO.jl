@@ -19,11 +19,13 @@ function parse_file_name(str)
   return files
 end
 
-function read_par_mesh(filename, baseval)
+"""
+function read_par_mesh(filename::String, baseval::T) where {T<:Integer}
+Read a medit mesh file in parallel
+"""
+function read_par_mesh(filename::String, baseval::T) where {T<:Integer}
   IndexType = typeof(baseval)
-  comm = MPI.COMM_WORLD
-  p = MPI.Comm_size(comm)
-  r = MPI.Comm_rank(comm)
+  comm, p, r = get_com_size_rank()
   lines = readlines(filename)
   lines = lines[map(x-> length(x) > 0 && (x[1] != '#'), lines)]
   f_s(x) = findall(map(y->occursin(x,y),lines))[1]
@@ -80,53 +82,44 @@ end
 
 
 """
-shift_par_msh!(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T) where {T}
-shifts a mesh in place by a constant 
+shift_par_msh!(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T) 
+shifts parallely mesh in place by a constant 
 """
 function shift_par_msh!(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T) where {T}
-  comm = MPI.COMM_WORLD
-  size = MPI.Comm_size(comm)
-  rank = MPI.Comm_rank(comm)
-  for i in eachindex(elmdist)
-    elmdist[i] += shift
-  end
-  for i in eachindex(eptr)
-    eptr[i] += shift
-  end
-  for i in eachindex(eind)
-    eind[i] += shift
-  end
+  elmdist .+= shift
+  eptr .+= shift
+  eind .+= shift
 end
 
 """
-shift_msh!(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T) where {T}
-shifts a mesh in place by a constant 
+shift_msh!(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T)
+shifts sequentially a parallel mesh in place by a constant 
 """
 function shift_msh!(; eptr::Vector{Vector{T}}, eind::Vector{Vector{T}}, elmdist::Vector{T}, shift::T) where {T}
   size = length(elmdist) - 1
-  for i in eachindex(elmdist)
-    elmdist[i] += shift
-  end
+  elmdist[i] .+= shift
   for rank=0:size-1
-    for i in eachindex(eptr[rank+1])
-        eptr[rank+1][i] += shift
-    end
-    for i in eachindex(eind[rank+1])
-        eind[rank+1][i] += shift
-    end
+    eptr[rank+1] .+= shift
+    eind[rank+1] .+= shift
   end
 end
 
 function write_par_dmesh(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
-  comm = MPI.COMM_WORLD
-  size = MPI.Comm_size(comm)
-  rank = MPI.Comm_rank(comm)
+  comm, size, rank = get_com_size_rank()
   io = open(filename * "-$rank" * ".dmh", "w")
   format_version = 0
   elmlocnbr = elmdist[rank+2] - elmdist[rank+1]
+  nMax = Ref{T}(maximum(eind))
+  MPI.Allreduce!(nMax, MPI.MAX, comm)
+  nMin = Ref{T}(minimum(eind))
+  MPI.Allreduce!(nMin, MPI.MIN, comm)
+  @info baseval, nMin
+  @assert baseval == nMin[]
+  
+  vertglbnbr = nMax[] - baseval + 1;
   println(io, format_version) # write version
   println(io, size," ", rank) # write procglbnum and procglbnim
-  println(io, elmdist[end]) # write total number of elements 
+  println(io, elmdist[end], " ", vertglbnbr) # write total number of elements 
   println(io, elmlocnbr, " ", eptr[end]) # write local number of elements and size of vertlocnbr
   println(io, baseval, " 000") # write baseval and chaco code
   print(io, length(elmdist), " ")
@@ -143,33 +136,29 @@ function write_par_dmesh(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, 
   end
 end
 
-function read_dmesh(x::Val{T}, filename::String) where {T}
+function read_dmesh(filename::String, T::DataType = Int32)
   files = parse_file_name(filename)
   nb_files = length(files)
   println("nbprocs = $nb_files")
   elmlocnum = zeros(T, nb_files)
   vertlocnum = zeros(T, nb_files)
-  eptr = [T[] for _ in 1:nb_files]
-  eind = [T[] for _ in 1:nb_files]
-  elmdist = []
+  eptr = Vector{Vector{T}}(undef, nb_files)
+  eind = Vector{Vector{T}}(undef, nb_files)
+  elmdist = T[]
   baseval = 0
   for (i,f) in enumerate(files)
     fIO = open(f)
-    version = extract!(fIO, 1)[1]
-    procglbnum, proclocnum = extract!(fIO, 2)
-    elmglbnum = extract!(fIO, 1)[1]
-    elmlocnum[i], vertlocnum[i] = extract!(fIO, 2)
-    baseval, chaco = extract!(fIO, 2)   
-    linea = split(readline(fIO))
-    tab= (x->parse(Int32,x)).(linea)
-    elmdist = tab[2:end]
-    elmlocnbr = elmdist[i] - elmdist[i]
+    version = extract!(fIO)[1]
+    procglbnum, proclocnum = extract_tuple!(fIO, 2)
+    elmglbnum = extract!(fIO)[1]
+    elmlocnum[i], vertlocnum[i] = extract_tuple!(fIO, 2)
+    baseval, chaco = extract_tuple!(fIO, 2)   
+    elmdist = extract!(fIO, T)[2:end]
     j = 1 
     eptr[i] = T[T(baseval)]
     eind[i] = T[] 
     while !eof(fIO)
-      linea = split(readline(fIO))
-      tab=(x->parse(Int32,x)).(linea)
+      tab = extract!(fIO, T)
       @assert tab[1] == length(tab[2:end])
       e = tab[2:end]
       append!(eptr[i], eptr[i][j]+length(e))
@@ -180,6 +169,37 @@ function read_dmesh(x::Val{T}, filename::String) where {T}
   end
   return eptr, eind, elmdist, baseval
 end
+
+"""
+read\\_scotch\\_mesh(filename, T) 
+read sequentially a scotch mesh
+"""
+function read_scotch_mesh(filename, T::DataType = Int32)
+  io = open(filename * ".msh", "r")
+  format_version = extract!(io, T)[1]
+  @assert format_version == 1
+  velmnbr, vnodnbr, edgenbr = extract_tuple!(io, 3, T)
+  velmbas, vnodbas, chaco_flags = extract_tuple!(io, 3, T)
+  if (velmbas > vnodbas)
+    for i=1:vnodnbr
+      readline(io)
+    end 
+  end
+  eptr = T[vnodbas]
+  eind = T[]
+  j = 1
+  for i = velmbas : velmbas + velmnbr -1 
+    tab = extract!(io, T)
+    e = tab[2:end]
+    @assert tab[1] == length(e)
+    append!(eptr, eptr[j]+length(e))
+    append!(eind, e)
+    j+=1
+  end
+  close(io)
+  return eptr, eind
+end
+
 
 """
 write_dmesh(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
@@ -214,9 +234,7 @@ function write_dmesh(;eptr::Vector{Vector{T}}, eind::Vector{Vector{T}}, elmdist:
 end
 
 function write_par_dgraph(;xadj::Vector{T}, adjncy::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
-  comm = MPI.COMM_WORLD
-  size = MPI.Comm_size(comm)
-  rank = MPI.Comm_rank(comm)
+  comm, size, rank = get_com_size_rank()
   io = open(filename * "-$rank" * ".dgr", "w")
   format_version = 2
   elmlocnbr = elmdist[rank+2] - elmdist[rank+1]
