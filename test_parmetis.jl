@@ -21,11 +21,16 @@ elseif rank == 2
   eind = Int32[5, 6, 10, 11, 6, 7, 11, 12, 7, 8, 12, 13, 8, 9, 13, 14]
 end
 elmdist = Int32[0, 2, 4, 8]
+
+
 # our algorithm
+xadj_m, adjcy_m = parmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), comm = comm)
+adj_check_m = metis_fmt_to_vector(xadj_m, adjcy_m, Int32(0))
+MPI.Barrier(comm)
 adj = dgraph_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), comm = comm) 
 MPI.Barrier(comm)
-# call parmetis
-xadj, adjcy = parmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), 
+# call parmetisj
+xadj, adjcy = ptscotchparmetis_mesh_to_dual(;elmdist=elmdist, eptr=eptr, eind=eind, baseval=Int32(0), ncommon=Int32(2), 
                                     comm = comm)
 adj_check = metis_fmt_to_vector(xadj, adjcy, Int32(0))
 MPI.Barrier(comm)
@@ -33,5 +38,10 @@ MPI.Barrier(comm)
 for i=1:length(adj)
   @test sort(adj[i]) == sort(adj_check[i])
 end
+for i=1:length(adj)
+  @test sort(adj[i]) == sort(adj_check_m[i])
+end
+@info "je suis", rank, xadj, adjcy
+sleep(100)
 MPI.Finalize()
 @test MPI.Finalized()

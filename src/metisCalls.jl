@@ -68,5 +68,3 @@ function metis_mesh_to_dual(;ne::T, nn::T , eptr::Vector{T}, eind::Vector{T}, nc
     x_adjncy = GC.@preserve r_adjncy [unsafe_load(r_adjncy[],i) for i=1:x_adj[end] ]
     return x_adj, x_adjncy
 end 
-
-

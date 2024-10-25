@@ -6,12 +6,15 @@ using Printf
 using Libdl
 export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_vector, Dgraph_header,
        mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
-       dgraph_dual, gen_parts, read_par_mesh, toProc, tile, send_lists, ptscotchparmetis_mesh_to_dual,
-       write_par_dmesh, write_par_dgraph, shift_par_msh!, list_to_csr, csr_to_list, read_dgraph_header, read_adj, parse_file_name,
+       dgraph_dual, gen_parts, read_par_mesh, ptscotchparmetis_mesh_to_dual,
+       write_par_dmesh, write_par_dgraph, shift_par_msh!, read_dgraph_header, read_adj, 
        write_dmesh, shift_msh!, read_dmesh, read_scotch_mesh
 
-
+# miscellaneous tools
+export parse_file_name, list_to_csr, csr_to_list, parse_file_name
 include("misc.jl")
+# MPI 
+export toProc, tile, send_lists, get_com_size_rank
 include("MPI_tools.jl")
 include("graphIO.jl")
 include("meshIO.jl")
@@ -224,8 +227,7 @@ computes a distributed dual graph
 """
 function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, baseval::T, ncommon::T, comm::MPI.Comm) where {T}
   t₀ = time()
-  r = MPI.Comm_rank(comm)
-  p = MPI.Comm_size(comm)
+  comm, p, r = get_com_size_rank() 
   ne = elmdist[p+1]
   neLoc = elmdist[r+2]-elmdist[r+1]
 
@@ -239,7 +241,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   toSend = [ Vector{T}() for _ in 1:p]
   for i=1:neLoc # ∀ e local element
     for n ∈ eind[1+eptr[i]:eptr[i+1]]  # ∀ n ∈ e
-      append!(toSend[toProc(nMax, n, nMin) + 1], i-1+elmdist[r+1], n)
+      append!(toSend[toProc(nMax, n, nMin, p) + 1], i-1+elmdist[r+1], n)
     end 
   end 
   t0 = time()

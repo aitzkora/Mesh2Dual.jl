@@ -28,67 +28,68 @@ end
 end
 
 @testset "graph_dual_new" begin
-  if !haskey(ENV, "METIS_LIB") 
-    @error "you must define METIS_LIB in your variable environment"
+  if haskey(ENV, "METIS_LIB") 
+
+    m_dat = reshape(Int32[1,2,3, 1,2,6, 2,6,5, 2,5,7, 2,7,4, 2,4,3], 3, 6)
+    m = Mesh{Int32}([m_dat[:, j] for j=1:size(m_dat,2)])
+
+    ptr, ind, ne  = mesh_to_scotch_fmt(m)
+
+    g1 = graph_dual_new(m, 1)
+    g2 = graph_dual_new(m, 2)
+    g3 = graph_dual_new(m, 3)
+
+    m1 = metis_graph_dual(m, 1)
+    m2 = metis_graph_dual(m, 2)
+    m3 = metis_graph_dual(m, 3)
+
+    m1p = graph_dual(m, 1);
+    m2p = graph_dual(m, 2);
+    m3p = graph_dual(m, 3);
+
+    @assert map(x->x .- 1, m1p.adj) == g1
+    @assert map(x->x .- 1, m2p.adj) == g2
+    @assert map(x->x .- 1, m3p.adj) == g3
+
+    @test m1 == m1p
+    @test m2 == m2p
+    @test m3 == m2p # yes it is m2, due to the special heuristic of metis
+  else
+    @warn "METIS_LIB not defined do not run graph_dual_new"
   end
- 
-  m_dat = reshape(Int32[1,2,3, 1,2,6, 2,6,5, 2,5,7, 2,7,4, 2,4,3], 3, 6)
-  m = Mesh{Int32}([m_dat[:, j] for j=1:size(m_dat,2)])
- 
-  ptr, ind, ne  = mesh_to_scotch_fmt(m)
-  
-  g1 = graph_dual_new(m, 1)
-  g2 = graph_dual_new(m, 2)
-  g3 = graph_dual_new(m, 3)
-   
-  m1 = metis_graph_dual(m, 1)
-  m2 = metis_graph_dual(m, 2)
-  m3 = metis_graph_dual(m, 3)
-  
-  m1p = graph_dual(m, 1);
-  m2p = graph_dual(m, 2);
-  m3p = graph_dual(m, 3);
-  
-  @assert map(x->x .- 1, m1p.adj) == g1
-  @assert map(x->x .- 1, m2p.adj) == g2
-  @assert map(x->x .- 1, m3p.adj) == g3
-  
-  
-  @test m1 == m1p
-  @test m2 == m2p
-  @test m3 == m2p # yes it is m2, due to the special heuristic of metis
 end
 
 @testset "metis_dual" begin
-  if !haskey(ENV, "METIS_LIB") 
-    @error "you must define METIS_LIB in your variable environment"
+  if haskey(ENV, "METIS_LIB") 
+
+    eptr = Int32[0, 3, 6, 9, 12, 15, 18]
+    eind = Int32[0, 1, 2, 0, 1, 5, 1, 5, 4, 1, 4, 6, 1, 6, 3, 1, 3, 2]
+    xadj, adjncy = metis_mesh_to_dual(ne=Int32(6), nn= Int32(7), eptr=eptr, eind=eind, ncommon = Int32(1), baseval=Int32(0))
+
+    #eptr = Int32[ 1, 4, 7, 10, 13, 16, 19]
+    #eind = Int32[ 0, 1, 2, 3, 1, 2, 6, 2, 6, 5, 2, 5, 7, 2, 7, 4, 2, 4, 3]
+    #xadj1, adjncy1 = metis_mesh_to_dual(ne=Int32(6), nn= Int32(7), eptr=eptr, eind=eind, ncommon = Int32(1), baseval=Int32(1))
+
+    @test true
+  else
+    @warn "METIS_LIB not defined"
   end
-
-  eptr = Int32[0, 3, 6, 9, 12, 15, 18]
-  eind = Int32[0, 1, 2, 0, 1, 5, 1, 5, 4, 1, 4, 6, 1, 6, 3, 1, 3, 2]
-  xadj, adjncy = metis_mesh_to_dual(ne=Int32(6), nn= Int32(7), eptr=eptr, eind=eind, ncommon = Int32(1), baseval=Int32(0))
-  
-  #eptr = Int32[ 1, 4, 7, 10, 13, 16, 19]
-  #eind = Int32[ 0, 1, 2, 3, 1, 2, 6, 2, 6, 5, 2, 5, 7, 2, 7, 4, 2, 4, 3]
-  #xadj1, adjncy1 = metis_mesh_to_dual(ne=Int32(6), nn= Int32(7), eptr=eptr, eind=eind, ncommon = Int32(1), baseval=Int32(1))
-
-  @test true
 end
-
 
 @testset "dgraph_dual" begin
   using MPI
-  if !haskey(ENV, "METIS_LIB") | !haskey(ENV, "PARMETIS_LIB")
-    @error "you must define PARMETIS_LIB and METIS_LIB in your variable environment"
-  end
-  mpiexec() do cmd
-    testdir = @__DIR__
-    run(`$cmd -n 3 $(Base.julia_cmd()) $(joinpath(testdir, "test_parmetis.jl"))`)
-    @test true
+  if haskey(ENV, "METIS_LIB") & haskey(ENV, "PARMETIS_LIB")
+    mpiexec() do cmd
+      testdir = @__DIR__
+      run(`$cmd -n 3 $(Base.julia_cmd()) $(joinpath(testdir, "test_parmetis.jl"))`)
+      @test true
+    end
+  else
+    @warn "PARMETIS_LIB and METIS_LIB not defined"
   end
 end
 
-@testset "MPI_tools_3" begin
+@testset "MPI_tools" begin
   using MPI
   mpiexec() do cmd
     testdir = @__DIR__

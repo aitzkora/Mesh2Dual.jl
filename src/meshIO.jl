@@ -1,24 +1,3 @@
-function parse_file_name(str)
-  pattern_rng = findfirst("%r", str)
-  if isnothing(pattern_rng)
-    @warn "file $str does not contains %r"
-    return
-  end
-  fst_part = str[1:pattern_rng[1]-1]
-  snd_part = str[pattern_rng[2]+1:end]
-  p = 0
-  files = String[] 
-  for s in readdir() # FIXME : works only in current dir
-      rx = Regex(fst_part*"(\\d)+"*snd_part)
-      mx = match(rx,s)
-      if !isnothing(mx)
-          p+=1
-          push!(files, fst_part*mx.captures[1]*snd_part)
-      end
-  end   
-  return files
-end
-
 """
 function read_par_mesh(filename::String, baseval::T) where {T<:Integer}
 Read a medit mesh file in parallel

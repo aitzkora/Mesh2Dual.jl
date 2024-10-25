@@ -3,9 +3,7 @@ using Mesh2Dual
 using Test
 
 MPI.Init()
-comm = MPI.COMM_WORLD
-size = MPI.Comm_size(comm)
-rank = MPI.Comm_rank(comm)
+comm, size, rank = get_com_size_rank()
 
 # tile
 n = 8
@@ -26,9 +24,8 @@ eCheck = sCheck + mCheck - 1
 # toProc
 nMax = 8
 toProcCheck=[0,0,0,1,1,1,2,2]
-for k=1:8
-  #println("$k -> $(toProc(nMax,k))")
-  @test toProc(nMax,k) == toProcCheck[k]
+for k=0:7
+  @test toProc(nMax, k, 0, size) == toProcCheck[k+1]
 end
 
 # send_lists

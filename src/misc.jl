@@ -1,4 +1,30 @@
 """
+parse_file_name(str::String)
+find all files matching with the regular expression where %r stands for rank number
+"""
+function parse_file_name(str::String)
+  pattern_rng = findfirst("%r", str)
+  if isnothing(pattern_rng)
+    @warn "file $str does not contains %r"
+    return
+  end
+  fst_part = str[1:pattern_rng[1]-1]
+  snd_part = str[pattern_rng[2]+1:end]
+  p = 0
+  files = String[] 
+  dir = dirname(str)
+  for s in readdir(dir, join=true)
+      rx = Regex(fst_part*"(\\d)+"*snd_part)
+      mx = match(rx,s)
+      if !isnothing(mx)
+          p+=1
+          push!(files, fst_part*mx.captures[1]*snd_part)
+      end
+  end   
+  return files
+end
+
+"""
 list_to_csr(adj::Vector{Vector{T}}) 
 converts a adjacency list to a csr pair based at 0
 """

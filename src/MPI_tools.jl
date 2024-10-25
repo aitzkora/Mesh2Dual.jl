@@ -51,14 +51,13 @@ function tile(nMax::T, rank::T, nMini::T = T(0)) where{T<:Integer}
 end
 
 """
-toProc(n::T, k::T, nMini::T = T(0)) where {T<:Integer}
+toProc(nMax, k, nMini, p) 
 
-maps a k index in [nMini,nMax] to a proc number belonging to [0, MPI.Comm_size]
+maps a k index in [nMini,nMax] to a proc number belonging to [0, p]
 according to the formula taken from "Parallel programming with Coarrays", p. 12
 
 """ 
-function toProc(nMax::T, k::T, nMini::T = T(0)) where {T<:Integer}
-  p = MPI.Comm_size(MPI.COMM_WORLD)
+function toProc(nMax::T, k::T, nMini::T, p::T) where {T<:Integer}
   n = nMax - nMini + 1
   m = convert(T, ceil(n / p))
   r = n % convert(T, p)
@@ -67,4 +66,16 @@ function toProc(nMax::T, k::T, nMini::T = T(0)) where {T<:Integer}
   else
     return floor(T, (k - r - nMini) / (m-1))
   end 
+end
+
+function toProcPello(vertglbnbr::T, k::T, baseval::T, p::T) where {T<:Integer}
+  k -= baseval
+  blokrmnval = 1 + (vertglbnbr - 1) % p
+  bloksizmax = ((vertglbnbr - 1) + p ) ÷ p
+  bloksizmin = bloksizmax - 1
+  proclocnum = k ÷ bloksizmax
+  if ((proclocnum >= blokrmnval) && (bloksizmin > 0))
+     proclocnum = blokrmnval + (k - blokrmnval * bloksizmax) ÷ bloksizmin
+  end 
+  return proclocnum
 end
