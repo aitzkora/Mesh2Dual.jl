@@ -1,19 +1,20 @@
+# Reader functions
 """
 function read_par_mesh(filename::String, baseval::T) where {T<:Integer}
-Read a medit mesh file in parallel
+reads a medit mesh file in parallel
 """
 function read_par_mesh(filename::String, baseval::T) where {T<:Integer}
-  IndexType = typeof(baseval)
+  IndexT = typeof(length(T[0]))
   comm, p, r = get_com_size_rank()
   lines = readlines(filename)
   lines = lines[map(x-> length(x) > 0 && (x[1] != '#'), lines)]
   f_s(x) = findall(map(y->occursin(x,y),lines))[1]
-  dim = parse(IndexType,lines[f_s("Dimension")+1])
+  dim = parse(T,lines[f_s("Dimension")+1])
   if (r == 0)
     @info "dim =", dim
   end
   of_nodes = f_s("Vertices")
-  nb_nodes = parse(IndexType, lines[of_nodes + 1])
+  nb_nodes = parse(T, lines[of_nodes + 1])
   nodes = zeros(Float64, nb_nodes, dim)
   for i=1:nb_nodes
     nodes[i,:] = map(x->parse(Float64,x), split(lines[of_nodes + 1 + i])[1:end-1])
@@ -26,64 +27,132 @@ function read_par_mesh(filename::String, baseval::T) where {T<:Integer}
   else
     of_elem = f_s("Tetrahedra")
   end
-  nb_elem = parse(IndexType, lines[of_elem + 1])
-  nb_elem = convert(typeof(length(IndexType[0])), nb_elem)
-  if r == 0
-    @info "nb_elem=", nb_elem
-  end
-  elmdist  = zeros(IndexType, p+1)
-  elements = zeros(IndexType, nb_elem, dim + 1)
+  nb_elem = parse(T, lines[of_elem + 1])
+  print_master("nb_elem=" * nb_elem)
+
+  elements = zeros(T, nb_elem, dim + 1)
   for i=1:nb_elem
-    elements[i, : ] = map(x->parse(IndexType,x), split(lines[of_elem + 1 + i])[1:dim+1])
+    elements[i, : ] = map(x->parse(T,x), split(lines[of_elem + 1 + i])[1:dim+1])
   end
-  nMin = convert(typeof(length(IndexType[0])), minimum(elements)) 
+  nMin = convert(IndexT, minimum(elements)) 
   elements .-= nMin;
-  nMin = convert(typeof(length(IndexType[0])), minimum(elements)) 
-  nMax = convert(typeof(length(IndexType[0])), maximum(elements)) 
-  #@assert nMin == 1
+  nMin = convert(IndexT, minimum(elements)) # FIXME : why ????
+  nMax = convert(IndexT, maximum(elements)) 
+
   # build elmdist
-  startIndex, endIndex, _ = tile(nMax, 0, nMin)
+  elmdist  = zeros(T, p+1)
+  startIndex, endIndex, _ = tile(nMax, 0, nMin, IndexT(p))
   elmdist[1] = startIndex
   elmdist[2] = endIndex
   for i=2:p
-    startIndex, endIndex, _ = tile(nMax, i-1, nMin)
+      startIndex, endIndex, _ = tile(nMax, i-1, nMin, IndexT(p))
     elmdist[i+1] = elmdist[i] + endIndex-startIndex + 1
   end 
-  startIndex, endIndex, sizeChunk = tile(nMax, r, nMin)
-  eind = zeros(IndexType, endIndex - startIndex + 1 , dim + 1)
+  startIndex, endIndex, sizeChunk = tile(nMax, r, nMin, IndexT(p))
+  eind = zeros(T, endIndex - startIndex + 1 , dim + 1)
   for i=startIndex:endIndex 
-      eind[i-startIndex+1,:] = map(x->parse(IndexType,x)-1, split(lines[of_elem + i + 2])[1:dim+1])
+      eind[i-startIndex+1,:] = map(x->parse(T,x)-1, split(lines[of_elem + i + 2])[1:dim+1])
   end
-  eptr = [IndexType(0):IndexType(dim+1):IndexType(sizeChunk * (dim + 1));]
+  eptr = [T(0):T(dim+1):T(sizeChunk * (dim + 1));]
   eind = eind'[:]
   return dim, eptr, eind, elmdist
 end
 
-
-"""
-shift_par_msh!(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T) 
-shifts parallely mesh in place by a constant 
-"""
-function shift_par_msh!(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T) where {T}
-  elmdist .+= shift
-  eptr .+= shift
-  eind .+= shift
-end
-
-"""
-shift_msh!(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, shift::T)
-shifts sequentially a parallel mesh in place by a constant 
-"""
-function shift_msh!(; eptr::Vector{Vector{T}}, eind::Vector{Vector{T}}, elmdist::Vector{T}, shift::T) where {T}
-  size = length(elmdist) - 1
-  elmdist[i] .+= shift
-  for rank=0:size-1
-    eptr[rank+1] .+= shift
-    eind[rank+1] .+= shift
+function read_par_dmh(filename::String, T::DataType = Int32)
+  files, basename = parse_file_name(filename)
+  com, size, rank = get_com_size_rank()
+  nb_files = length(files)
+  elmdist = Vector{T}(undef, size+1)
+  baseval = 0
+  fIO = open(files[rank+1])
+  version = extract!(fIO)[1]
+  procglbnum, proclocnum = extract_tuple!(fIO, 2)
+  elmglbnum = extract!(fIO)[1]
+  elmlocnum, vertlocnum = extract_tuple!(fIO, 2)
+  baseval, chaco = extract_tuple!(fIO, 2)   
+  elmdist = extract!(fIO, T)[2:end]
+  j = 1 
+  eptr = T[baseval]
+  eind = T[] 
+  while !eof(fIO)
+    tab = extract!(fIO, T)
+    @assert tab[1] == length(tab[2:end])
+    e = tab[2:end]
+    append!(eptr, eptr[j]+length(e))
+    append!(eind, e)
+    j += 1
   end
+  close(fIO)
+  return eptr, eind, elmdist, baseval, basename
 end
 
-function write_par_dmesh(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
+function read_dmh(filename::String, T::DataType = Int32)
+  files, basename = parse_file_name(filename)
+  elmlocnum = zeros(T, nb_files)
+  vertlocnum = zeros(T, nb_files)
+  eptr = Vector{Vector{T}}(undef, nb_files)
+  eind = Vector{Vector{T}}(undef, nb_files)
+  elmdist = T[]
+  baseval = 0
+  for (i,f) in enumerate(files)
+    fIO = open(f)
+    version = extract!(fIO)[1]
+    procglbnum, proclocnum = extract_tuple!(fIO, 2)
+    elmglbnum = extract!(fIO)[1]
+    elmlocnum[i], vertlocnum[i] = extract_tuple!(fIO, 2)
+    baseval, chaco = extract_tuple!(fIO, 2)   
+    elmdist = extract!(fIO, T)[2:end]
+    j = 1 
+    eptr[i] = T[T(baseval)]
+    eind[i] = T[] 
+    while !eof(fIO)
+      tab = extract!(fIO, T)
+      @assert tab[1] == length(tab[2:end])
+      e = tab[2:end]
+      append!(eptr[i], eptr[i][j]+length(e))
+      append!(eind[i], e)
+      j += 1
+    end
+    close(fIO)
+  end
+  return eptr, eind, elmdist, baseval, basename
+end
+
+"""
+read\\_msh(filename, T) 
+read sequentially a scotch mesh
+"""
+function read_msh(filename, T::DataType = Int32)
+  io = open(filename * ".msh", "r")
+  format_version = extract!(io, T)[1]
+  @assert format_version == 1
+  velmnbr, vnodnbr, edgenbr = extract_tuple!(io, 3, T)
+  velmbas, vnodbas, chaco_flags = extract_tuple!(io, 3, T)
+  if (velmbas > vnodbas)
+    for i=1:vnodnbr
+      readline(io)
+    end 
+  end
+  eptr = T[vnodbas]
+  eind = T[]
+  j = 1
+  for i = velmbas : velmbas + velmnbr -1 
+    tab = extract!(io, T)
+    e = tab[2:end]
+    @assert tab[1] == length(e)
+    append!(eptr, eptr[j]+length(e))
+    append!(eind, e)
+    j+=1
+  end
+  close(io)
+  eptr .-= vnodbas
+  eind .-= vnodbas
+  return eptr, eind
+end
+
+#Writers
+
+function write_par_dmh(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
   comm, size, rank = get_com_size_rank()
   io = open(filename * "-$rank" * ".dmh", "w")
   format_version = 0
@@ -115,77 +184,13 @@ function write_par_dmesh(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, 
   end
 end
 
-function read_dmesh(filename::String, T::DataType = Int32)
-  files = parse_file_name(filename)
-  nb_files = length(files)
-  println("nbprocs = $nb_files")
-  elmlocnum = zeros(T, nb_files)
-  vertlocnum = zeros(T, nb_files)
-  eptr = Vector{Vector{T}}(undef, nb_files)
-  eind = Vector{Vector{T}}(undef, nb_files)
-  elmdist = T[]
-  baseval = 0
-  for (i,f) in enumerate(files)
-    fIO = open(f)
-    version = extract!(fIO)[1]
-    procglbnum, proclocnum = extract_tuple!(fIO, 2)
-    elmglbnum = extract!(fIO)[1]
-    elmlocnum[i], vertlocnum[i] = extract_tuple!(fIO, 2)
-    baseval, chaco = extract_tuple!(fIO, 2)   
-    elmdist = extract!(fIO, T)[2:end]
-    j = 1 
-    eptr[i] = T[T(baseval)]
-    eind[i] = T[] 
-    while !eof(fIO)
-      tab = extract!(fIO, T)
-      @assert tab[1] == length(tab[2:end])
-      e = tab[2:end]
-      append!(eptr[i], eptr[i][j]+length(e))
-      append!(eind[i], e)
-      j += 1
-    end
-    close(fIO)
-  end
-  return eptr, eind, elmdist, baseval
-end
-
-"""
-read\\_scotch\\_mesh(filename, T) 
-read sequentially a scotch mesh
-"""
-function read_scotch_mesh(filename, T::DataType = Int32)
-  io = open(filename * ".msh", "r")
-  format_version = extract!(io, T)[1]
-  @assert format_version == 1
-  velmnbr, vnodnbr, edgenbr = extract_tuple!(io, 3, T)
-  velmbas, vnodbas, chaco_flags = extract_tuple!(io, 3, T)
-  if (velmbas > vnodbas)
-    for i=1:vnodnbr
-      readline(io)
-    end 
-  end
-  eptr = T[vnodbas]
-  eind = T[]
-  j = 1
-  for i = velmbas : velmbas + velmnbr -1 
-    tab = extract!(io, T)
-    e = tab[2:end]
-    @assert tab[1] == length(e)
-    append!(eptr, eptr[j]+length(e))
-    append!(eind, e)
-    j+=1
-  end
-  close(io)
-  return eptr, eind
-end
-
 
 """
 write_dmesh(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
 
 write sequentially a distributed mesh in a file sequence
 """
-function write_dmesh(;eptr::Vector{Vector{T}}, eind::Vector{Vector{T}}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
+function write_dmh(;eptr::Vector{Vector{T}}, eind::Vector{Vector{T}}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
   size = length(elmdist) - 1
   for rank=0:size-1
     io = open(filename * "-$rank" * ".dmh", "w")
@@ -211,38 +216,3 @@ function write_dmesh(;eptr::Vector{Vector{T}}, eind::Vector{Vector{T}}, elmdist:
     close(io)
   end
 end
-
-function write_par_dgraph(;xadj::Vector{T}, adjncy::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
-  comm, size, rank = get_com_size_rank()
-  io = open(filename * "-$rank" * ".dgr", "w")
-  format_version = 2
-  elmlocnbr = elmdist[rank+2] - elmdist[rank+1]
-  vertglbnbr = Ref{T}(xadj[elmlocnbr])
-  edgelocnbr = 0
-  for i=1:(length(xadj)-1)
-    for n ∈ adjncy[1+xadj[i]:xadj[i+1]]
-        edgelocnbr = edgelocnbr + 1
-    end 
-  end 
-  edgeglbnbr = Ref{T}(edgelocnbr)
-  MPI.Allreduce!(edgeglbnbr, MPI.SUM, comm)
-  println(io, format_version) # write version
-  println(io, size,"\t", rank) # write procglbnum and procglbnim
-  println(io, elmdist[end], "\t",  edgeglbnbr[]) # write global vertices and edges number
-  println(io, elmlocnbr, "\t", edgelocnbr) # write local number of elements and size of vertlocnbr
-  println(io, baseval, "\t000") # write baseval and chaco code
-  for i=1:length(xadj)-1
-    sizeLoc=xadj[i+1]-xadj[i]
-    if (sizeLoc > 0)
-      print(io, xadj[i+1] - xadj[i], "\t")
-      for idx=xadj[i]+1:xadj[i+1]-1
-        print(io, adjncy[idx], "\t")
-      end
-      println(io, adjncy[xadj[i+1]])
-    else
-      println(io,0)
-    end
-  end   
-  close(io) 
-end     
-        

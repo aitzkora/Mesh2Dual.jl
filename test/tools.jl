@@ -8,7 +8,7 @@ comm, size, rank = get_com_size_rank()
 # tile
 n = 8
 mCheck = floor(n/size)
-s,e,m = tile(n, rank, 1)
+s,e,m = tile(n, rank, 1, Int64(size))
 if rank == 0
   sCheck, mCheck = 1, 3
 elseif rank == 1

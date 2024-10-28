@@ -73,9 +73,7 @@ function total_com_vol(p::Partition)
     end
   end
   tot_vol = 0
-  #println("nb_inter = " nb_inter
   for i=1:size(dual.adj,1)
-
     if (N_adj[i] > 0)
       tot_vol += p.vsize[i] * N_adj[i]
     end
@@ -109,9 +107,6 @@ function total_com_vol_2(vertnnd::Int64, verttax, edgetax, vsize, epart)
   return tot_vol
 end
 
-
-#w1 = read_files("/home/fux/sources/hou10ni2d/build")
-#w2 = read_files("/home/fux/sources/hou10ni2d/build_with_scotch")
 
 function write_msh(p::Partition, filename)
   n_nodes=size(p.nodes,1)

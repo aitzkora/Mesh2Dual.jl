@@ -8,6 +8,19 @@ function get_com_size_rank()
   rank = MPI.Comm_rank(comm)
   return comm, size, rank
 end
+
+"""
+print_master(str)
+print only on master process
+"""
+
+function print_master(str)
+   _, _, rank = get_com_size_rank()
+   if (rank == 0)
+       println(str)
+   end
+end
+
 """
 function send_lists(verttab::Vector{T}, edgetab::Vector{T}) where T
 
@@ -28,15 +41,13 @@ function send_lists(verttab::Vector{T}, edgetab::Vector{T}) where T
 end
 
 """
-tile(nMini::T, rank::T; nMini)
+tile(nMax, r, nMini, p)
 
-computes a partition of \\{nMini...nMax\\}, into p MPI processes
-rank is in [0, nbproc-1]
+computes bounds of a r-th part of the global partition of set \\{nMini...nMax\\} in p parts
 """
 
-function tile(nMax::T, rank::T, nMini::T = T(0)) where{T<:Integer}
+function tile(nMax::T, rank::T, nMini::T, p::T) where {T<:Integer}
   # tiling indexes 
-  p = convert(T, MPI.Comm_size(MPI.COMM_WORLD))
   n = nMax - nMini + T(1)
   m = ceil(T, n / p) # could be replace by (n-1)/p + 1
   r = n % p
@@ -78,4 +89,13 @@ function toProcPello(vertglbnbr::T, k::T, baseval::T, p::T) where {T<:Integer}
      proclocnum = blokrmnval + (k - blokrmnval * bloksizmax) ÷ bloksizmin
   end 
   return proclocnum
+end
+
+
+function datascan(n, i, p) 
+  return i * (n ÷ p) + ((i > (n % p)) ? (n % p) : i)
+end
+
+function datasize(n, i, p)
+  return  (n + (p - 1 - i)) ÷ p
 end

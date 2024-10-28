@@ -21,7 +21,7 @@ function parse_file_name(str::String)
           push!(files, fst_part*mx.captures[1]*snd_part)
       end
   end   
-  return files
+  return files, fst_part
 end
 
 """

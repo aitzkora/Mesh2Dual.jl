@@ -34,3 +34,37 @@ function read_adj(s::IO)
   end
   return adj
 end
+
+function write_par_dgraph(;xadj::Vector{T}, adjncy::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
+  comm, size, rank = get_com_size_rank()
+  io = open(filename * "$rank" * ".dgr", "w")
+  format_version = 2
+  elmlocnbr = elmdist[rank+2] - elmdist[rank+1]
+  vertglbnbr = Ref{T}(xadj[elmlocnbr])
+  edgelocnbr = 0
+  for i=1:(length(xadj)-1)
+    for n ∈ adjncy[1+xadj[i]:xadj[i+1]]
+        edgelocnbr = edgelocnbr + 1
+    end 
+  end 
+  edgeglbnbr = Ref{T}(edgelocnbr)
+  MPI.Allreduce!(edgeglbnbr, MPI.SUM, comm)
+  println(io, format_version) # write version
+  println(io, size,"\t", rank) # write procglbnum and procglbnim
+  println(io, elmdist[end], "\t",  edgeglbnbr[]) # write global vertices and edges number
+  println(io, elmlocnbr, "\t", edgelocnbr) # write local number of elements and size of vertlocnbr
+  println(io, baseval, "\t000") # write baseval and chaco code
+  for i=1:length(xadj)-1
+    sizeLoc=xadj[i+1]-xadj[i]
+    if (sizeLoc > 0)
+      print(io, xadj[i+1] - xadj[i], "\t")
+      for idx=xadj[i]+1:xadj[i+1]-1
+        print(io, adjncy[idx], "\t")
+      end
+      println(io, adjncy[xadj[i+1]])
+    else
+      println(io,0)
+    end
+  end   
+  close(io) 
+end

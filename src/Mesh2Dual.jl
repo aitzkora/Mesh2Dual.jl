@@ -6,17 +6,26 @@ using Printf
 using Libdl
 export Mesh, Graph, graph_dual, mesh_to_metis_fmt, metis_graph_dual, metis_fmt_to_vector, Dgraph_header,
        mesh_to_scotch_fmt, graph_dual_new, metis_mesh_to_dual, SimplexMesh, parmetis_mesh_to_dual,
-       dgraph_dual, gen_parts, read_par_mesh, ptscotchparmetis_mesh_to_dual,
-       write_par_dmesh, write_par_dgraph, shift_par_msh!, read_dgraph_header, read_adj, 
-       write_dmesh, shift_msh!, read_dmesh, read_scotch_mesh
+       dgraph_dual, gen_parts, ptscotchparmetis_mesh_to_dual
 
-# miscellaneous tools
+# misc
 export parse_file_name, list_to_csr, csr_to_list, parse_file_name
 include("misc.jl")
+
 # MPI 
-export toProc, tile, send_lists, get_com_size_rank
+export toProc, tile, send_lists, get_com_size_rank, print_master, toProcPello, datasize, datascan
 include("MPI_tools.jl")
+
+# IO on graphs
+export write_par_dgraph, read_dgraph_header, read_adj
 include("graphIO.jl")
+
+# mesh tools
+export shift_par_msh!, shift_msh!, split_msh, split_msh2
+include("meshTools.jl") 
+
+# reading and writing meshes sequentially and parallely
+export write_dmh, read_dmh, read_msh, write_par_dmh, read_par_mesh, read_par_dmh
 include("meshIO.jl")
 
 """
@@ -47,8 +56,8 @@ end
 
 # to do some comparisons with metis
 include("metisCalls.jl")
-include("ParMetisCall.jl")
 
+include("ParMetisCall.jl")
 
 
 """
@@ -63,13 +72,10 @@ Overloaded equality operator for Graphs
 """
 Base.:(==)(a::Graph, b::Graph) = Base.:(==)(a.adj, b.adj)
 
-
-using Test
-
 """
 gen_parts(l::Array{Int64,1}, k::Int)
 
-generates an Array contaning the (#l choose k) sets of k elements in the set l
+generates an array contaning the (#l choose k) sets of k elements in the set l
 """
 function gen_parts(l::Vector{T}, k::T) where {T}
     n = size(l, 1)
@@ -241,7 +247,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   toSend = [ Vector{T}() for _ in 1:p]
   for i=1:neLoc # ∀ e local element
     for n ∈ eind[1+eptr[i]:eptr[i+1]]  # ∀ n ∈ e
-      append!(toSend[toProc(nMax, n, nMin, p) + 1], i-1+elmdist[r+1], n)
+      append!(toSend[toProc(nMax, n, nMin, T(p)) + 1], i-1+elmdist[r+1], n)
     end 
   end 
   t0 = time()
@@ -251,10 +257,10 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   #@printf "tps first All2All %.3e\n" time() - t0
   t0 = time()
   #@info "apres envoi", verttab, edgetab
-  startIndex, endIndex , sizeChunk = tile(nMax, T(r), nMin)
+  startIndex, endIndex , sizeChunk = tile(nMax, T(r), nMin, T(p))
   # n2p[idx] will contain the list of procs containing the node idx
   n2p = [ Vector{T}() for _ in startIndex:endIndex ]
-  println("nodes range : [$startIndex, $endIndex], $sizeChunk")
+  #println("nodes range : [$startIndex, $endIndex], $sizeChunk")
   frsttab = fill(zero(T), 2 * sizeChunk)
   frsttab[2:2:2*sizeChunk] .= -one(T)
   # frsttab [2i] will have the value :
