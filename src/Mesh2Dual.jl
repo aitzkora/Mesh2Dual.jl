@@ -241,13 +241,14 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   MPI.Allreduce!(nMax, MPI.MAX, comm)
   nMin = Ref{T}(minimum(eind))
   MPI.Allreduce!(nMin, MPI.MIN, comm)
-  nn = nMax[] - nMin[] + T(1)
   nMin = nMin[]
   nMax = nMax[]
+  @assert baseval == nMin
+  nn = nMax - baseval + T(1)
   toSend = [ Vector{T}() for _ in 1:p]
   for i=1:neLoc # ∀ e local element
-    for n ∈ eind[1+eptr[i]:eptr[i+1]]  # ∀ n ∈ e
-      append!(toSend[toProc(nMax, n, nMin, T(p)) + 1], i-1+elmdist[r+1], n)
+    for n ∈ eind[1+eptr[i]-baseval:eptr[i+1]-baseval]  # ∀ n ∈ e
+      append!(toSend[toProc(nn, n, baseval, T(p)) + 1], i-1+elmdist[r+1], n)
     end 
   end 
   t0 = time()
@@ -257,7 +258,7 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   #@printf "tps first All2All %.3e\n" time() - t0
   t0 = time()
   #@info "apres envoi", verttab, edgetab
-  startIndex, endIndex , sizeChunk = tile(nMax, T(r), nMin, T(p))
+  startIndex, endIndex , sizeChunk = tile(nn, T(r), baseval, T(p))
   # n2p[idx] will contain the list of procs containing the node idx
   n2p = [ Vector{T}() for _ in startIndex:endIndex ]
   #println("nodes range : [$startIndex, $endIndex], $sizeChunk")
@@ -332,10 +333,10 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
   # build 1-adjacency
   adj = [Set{T}() for _ in 1:neLoc]
   for i=1:neLoc 
-    e = i-1+elmdist[r+1]
-    for n ∈ eind[1+eptr[i]:eptr[i+1]]  
+    e = i-1+elmdist[r+1]-baseval
+    for n ∈ eind[1+eptr[i]-baseval:eptr[i+1]-baseval]  
       for e₂ ∈ nn2e[n]
-        if (e₂ ≠ e)
+        if (e₂-baseval ≠ e)
           push!(adj[i], e₂)
         end  
       end 
@@ -347,9 +348,9 @@ function dgraph_dual(;elmdist::Vector{T}, eptr::Vector{T}, eind::Vector{T}, base
     adjp = [Set{T}() for _ in 1:neLoc]
     for i=1:neLoc
       accu = fill(T(0), length(adj[i]))
-      for n ∈ eind[1+eptr[i]:eptr[i+1]] 
+      for n ∈ eind[1+eptr[i]-baseval:eptr[i+1]-baseval] 
         for (j,e₂) ∈ enumerate(adj[i])
-          if ((e₂ ∈ nn2e[n]) & (e₂ ≠ ((i-1) + elmdist[r+1] )))
+          if ((e₂ ∈ nn2e[n]) & (e₂ ≠ ((i-1) + elmdist[r+1])))
             accu[j] += 1
           end 
         end

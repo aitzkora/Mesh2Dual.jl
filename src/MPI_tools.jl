@@ -46,19 +46,11 @@ tile(nMax, r, nMini, p)
 computes bounds of a r-th part of the global partition of set \\{nMini...nMax\\} in p parts
 """
 
-function tile(nMax::T, rank::T, nMini::T, p::T) where {T<:Integer}
-  # tiling indexes 
-  n = nMax - nMini + T(1)
-  m = ceil(T, n / p) # could be replace by (n-1)/p + 1
-  r = n % p
-  if (r > T(0) && rank >= r)
-    m = m - 1
-    startIndex = rank * m + r + nMini
-  else
-    startIndex = rank * m + nMini
-  end
-  endIndex = startIndex + m - T(1)
-  return startIndex, endIndex, m
+function tile(nn::T, rank::T, baseval::T, p::T) where {T<:Integer}
+  startIndex = datascan(nn, rank, p) + baseval
+  chunkSize = datasize(nn, rank, p)
+  endIndex = startIndex + chunkSize - 1
+  return startIndex, endIndex, chunkSize
 end
 
 """
@@ -68,18 +60,7 @@ maps a k index in [nMini,nMax] to a proc number belonging to [0, p]
 according to the formula taken from "Parallel programming with Coarrays", p. 12
 
 """ 
-function toProc(nMax::T, k::T, nMini::T, p::T) where {T<:Integer}
-  n = nMax - nMini + 1
-  m = convert(T, ceil(n / p))
-  r = n % convert(T, p)
-  if (r == 0  || (k-nMini +1) <= m * r)
-    return floor(T, (k - nMini) / m)
-  else
-    return floor(T, (k - r - nMini) / (m-1))
-  end 
-end
-
-function toProcPello(vertglbnbr::T, k::T, baseval::T, p::T) where {T<:Integer}
+function toProc(vertglbnbr::T, k::T, baseval::T, p::T) where {T<:Integer}
   k -= baseval
   blokrmnval = 1 + (vertglbnbr - 1) % p
   bloksizmax = ((vertglbnbr - 1) + p ) ÷ p
@@ -91,7 +72,10 @@ function toProcPello(vertglbnbr::T, k::T, baseval::T, p::T) where {T<:Integer}
   return proclocnum
 end
 
-
+"""
+taken from scotch
+give
+"""
 function datascan(n, i, p) 
   return i * (n ÷ p) + ((i > (n % p)) ? (n % p) : i)
 end

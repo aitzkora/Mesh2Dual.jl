@@ -11,7 +11,7 @@ struct dgraph_header
 end
 
 function read_dgraph_header(s::IO)
-  version = extract!(s)[1]
+  version = extract!(s, Int32)[1]
   procglbnum, proclocnum = extract_tuple!(s, 2)
   vertglbnum, edgeglbnum = extract_tuple!(s, 2)
   vertlocnum, edgelocnum = extract_tuple!(s, 2)
@@ -23,14 +23,9 @@ function read_adj(s::IO)
   adj = Vector{Int32}[]
   i = 5
   while !eof(s)
-    linea = split(readline(s), "\t")
-    tab = (x->parse(Int32,x)).(linea)
-    if tab[1] != length(tab[2:end])
-        println("mauvaise taille", " ", i, " ", linea)
-    else
-      push!(adj, tab[2:end])
-    end
-    i+=1
+    tab = extract!(s, Int32, "\t")
+    @assert tab[1] == length(tab[2:end])
+    push!(adj, tab[2:end])
   end
   return adj
 end
@@ -43,7 +38,7 @@ function write_par_dgraph(;xadj::Vector{T}, adjncy::Vector{T}, elmdist::Vector{T
   vertglbnbr = Ref{T}(xadj[elmlocnbr])
   edgelocnbr = 0
   for i=1:(length(xadj)-1)
-    for n ∈ adjncy[1+xadj[i]:xadj[i+1]]
+    for n ∈ adjncy[1+xadj[i]-baseval:xadj[i+1]-baseval]
         edgelocnbr = edgelocnbr + 1
     end 
   end 
@@ -59,9 +54,9 @@ function write_par_dgraph(;xadj::Vector{T}, adjncy::Vector{T}, elmdist::Vector{T
     if (sizeLoc > 0)
       print(io, xadj[i+1] - xadj[i], "\t")
       for idx=xadj[i]+1:xadj[i+1]-1
-        print(io, adjncy[idx], "\t")
+        print(io, adjncy[idx-baseval], "\t")
       end
-      println(io, adjncy[xadj[i+1]])
+      println(io, adjncy[xadj[i+1]-baseval])
     else
       println(io,0)
     end

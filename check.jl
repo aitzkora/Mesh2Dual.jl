@@ -24,8 +24,8 @@ if (length(ARGS) < 2)
   exit(-1) 
 end
 
-f1 = parse_file_name(ARGS[1])
-f2 = parse_file_name(ARGS[2])
+f1, _ = parse_file_name(ARGS[1])
+f2, _ = parse_file_name(ARGS[2])
 if (length(ARGS) >= 3)
   baseval = parse(Int64, ARGS[3])
 end

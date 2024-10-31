@@ -28,8 +28,8 @@ end
 list_to_csr(adj::Vector{Vector{T}}) 
 converts a adjacency list to a csr pair based at 0
 """
-function list_to_csr(adj::Vector{Vector{T}}) where {T}
-    xadj = T[0]
+function list_to_csr(adj::Vector{Vector{T}}, baseval::T = T(0)) where {T}
+    xadj = T[baseval]
     adjncy = T[] 
     for (i, e) in enumerate(adj)
         append!(xadj, xadj[i]+length(e))
@@ -53,12 +53,12 @@ function csr_to_list(eptr::Vector{T}, eind::Vector{T}) where {T}
 end 
 
 """
-extract!(s::IO, T::DataType)
+extract!(s::IO, T::DataType, dlm)
 extract a Vector{T} in a text line in s 
 """
 
-function extract!(s::IO, T::DataType = Int32)
-  tab = split(readline(s))
+function extract!(s::IO, T::DataType, dlm = isspace)
+  tab = split(readline(s), dlm)
   return (x->parse(T,x)).(tab[1:end])
 end
 

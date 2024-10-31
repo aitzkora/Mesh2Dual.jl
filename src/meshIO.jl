@@ -61,13 +61,16 @@ end
 function read_par_dmh(filename::String, T::DataType = Int32)
   files, basename = parse_file_name(filename)
   com, size, rank = get_com_size_rank()
+  if (length(files) != size)
+    @error "bad number of MPI processes, must be equal to", length(files)
+  end
   nb_files = length(files)
   elmdist = Vector{T}(undef, size+1)
   baseval = 0
   fIO = open(files[rank+1])
-  version = extract!(fIO)[1]
+  version = extract!(fIO, T)[1]
   procglbnum, proclocnum = extract_tuple!(fIO, 2)
-  elmglbnum = extract!(fIO)[1]
+  elmglbnum = extract!(fIO, T)[1]
   elmlocnum, vertlocnum = extract_tuple!(fIO, 2)
   baseval, chaco = extract_tuple!(fIO, 2)   
   elmdist = extract!(fIO, T)[2:end]
@@ -86,8 +89,13 @@ function read_par_dmh(filename::String, T::DataType = Int32)
   return eptr, eind, elmdist, baseval, basename
 end
 
+"""
+function read_dmh(filename, T)
+reads sequentially a distributed mesh scotch file
+"""
 function read_dmh(filename::String, T::DataType = Int32)
   files, basename = parse_file_name(filename)
+  nb_files = length(files)
   elmlocnum = zeros(T, nb_files)
   vertlocnum = zeros(T, nb_files)
   eptr = Vector{Vector{T}}(undef, nb_files)
@@ -96,9 +104,9 @@ function read_dmh(filename::String, T::DataType = Int32)
   baseval = 0
   for (i,f) in enumerate(files)
     fIO = open(f)
-    version = extract!(fIO)[1]
+    version = extract!(fIO, T)[1]
     procglbnum, proclocnum = extract_tuple!(fIO, 2)
-    elmglbnum = extract!(fIO)[1]
+    elmglbnum = extract!(fIO, T)[1]
     elmlocnum[i], vertlocnum[i] = extract_tuple!(fIO, 2)
     baseval, chaco = extract_tuple!(fIO, 2)   
     elmdist = extract!(fIO, T)[2:end]
@@ -123,7 +131,7 @@ read\\_msh(filename, T)
 read sequentially a scotch mesh
 """
 function read_msh(filename, T::DataType = Int32)
-  io = open(filename * ".msh", "r")
+  io = open(filename, "r")
   format_version = extract!(io, T)[1]
   @assert format_version == 1
   velmnbr, vnodnbr, edgenbr = extract_tuple!(io, 3, T)
@@ -164,54 +172,62 @@ function write_par_dmh(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, ba
   @info baseval, nMin
   @assert baseval == nMin[]
   
-  vertglbnbr = nMax[] - baseval + 1;
+  vertglbnbr = nMax[] - baseval + 1
   println(io, format_version) # write version
-  println(io, size," ", rank) # write procglbnum and procglbnim
+  println(io, size, " ", rank) # write procglbnum and procglbnim
   println(io, elmdist[end], " ", vertglbnbr) # write total number of elements 
   println(io, elmlocnbr, " ", eptr[end]) # write local number of elements and size of vertlocnbr
   println(io, baseval, " 000") # write baseval and chaco code
   print(io, length(elmdist), " ")
   for elm=elmdist[1:end-1]
-      print(io, elm," ")
+    print(io, elm, " ")
   end
   println(io, elmdist[end])
   for i=1:length(eptr)-1
-      print(io, eptr[i+1] - eptr[i], " ")
-      for idx=eptr[i]-baseval+1:eptr[i+1]-baseval-1
-          print(io, eind[idx], " ")
-      end
-      println(io,eind[eptr[i+1]-baseval])
+    print(io, eptr[i+1] - eptr[i], " ")
+    for idx=eptr[i]-baseval+1:eptr[i+1]-baseval-1
+      print(io, eind[idx], " ")
+    end
+    println(io,eind[eptr[i+1]-baseval])
   end
 end
 
 
 """
-write_dmesh(;eptr::Vector{T}, eind::Vector{T}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
-
+write_dmh(;eptr, eind, elmdist, baseval, filename) 
 write sequentially a distributed mesh in a file sequence
 """
 function write_dmh(;eptr::Vector{Vector{T}}, eind::Vector{Vector{T}}, elmdist::Vector{T}, baseval::T, filename::String) where {T}
   size = length(elmdist) - 1
+  nMax = eind[1][1]
+  nMin = nMax
   for rank=0:size-1
+      nMax = max(nMax, maximum(eind[rank+1])) 
+      nMin = min(nMin, minimum(eind[rank+1])) 
+  end
+  @assert nMin == baseval
+  vertglbnbr = nMax - baseval + 1
+  for rank=0:size-1
+    @assert baseval == eptr[rank+1][1]
     io = open(filename * "-$rank" * ".dmh", "w")
     format_version = 0
     elmlocnbr = elmdist[rank+2] - elmdist[rank+1]
     println(io, format_version) # write version
-    println(io, size," ", rank) # write procglbnum and procglbnim
-    println(io, elmdist[end]) # write total number of elements 
-    println(io, elmlocnbr, " ", eptr[rank+1][end]) # write local number of elements and size of vertlocnbr
+    println(io, size, " ", rank) # write procglbnum and procglbnim
+    println(io, elmdist[end] - baseval, " ", vertglbnbr) # write total number of elements 
+    println(io, elmlocnbr, " ", eptr[rank+1][end] - eptr[rank+1][1]) # write local number of elements and size of vertlocnbr
     println(io, baseval, " 000") # write baseval and chaco code
     print(io, length(elmdist), " ")
     for elm=elmdist[1:end-1]
-        print(io, elm," ")
+      print(io, elm," ")
     end
     println(io, elmdist[end])
     for i=1:length(eptr[rank+1])-1
-        print(io, eptr[rank+1][i+1] - eptr[rank+1][i], " ")
-        for idx=eptr[rank+1][i]-baseval+1:eptr[rank+1][i+1]-baseval-1
-            print(io, eind[rank+1][idx], " ")
-        end
-        println(io,eind[rank+1][eptr[rank+1][i+1]-baseval])
+      print(io, eptr[rank+1][i+1] - eptr[rank+1][i], " ")
+      for idx=eptr[rank+1][i]-baseval+1:eptr[rank+1][i+1]-baseval-1
+        print(io, eind[rank+1][idx], " ")
+      end
+      println(io,eind[rank+1][eptr[rank+1][i+1]-baseval])
     end
     close(io)
   end

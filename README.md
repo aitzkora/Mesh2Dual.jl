@@ -14,16 +14,26 @@ using Mesh2Dual
 Pkg.test("Mesh2Dual")
 ```
 
+## convert a scotch mesh file (msh) to distributed scotch mesh file (dmh) 
+```
+julia msh2dmh.jl --filename data/ship001.msh --parts 3
+```
+
+## shift a distributed mesh file by a baseval
+```
+julia shftdmh.jl --filename data/ship001-%r.dmh --shift 1 
+```
+
 ## compute a dual graph of a mesh (medit file) in parallel
 
 ```bash
-mpirun -np 3 julia mesh2dgr.jl --filename mesh_oliv.mesh --shift 1
+mpirun -np 3 julia mesh2dgr.jl --filename mesh_oliv.mesh
 ```
 
 ## compute a dual graph of a dmh (distributed mesh scotch file) to a scotch distributed graph
 
 ```bash
-mpirun -np 3 julia dmh2dgr.jl --filename data/ship001-%r.dmh
+mpirun -np 3 julia dmh2dgr.jl --filename data/ship001-%r.dmh --ncommon 2
 ```
 
 ## How to check if two distributed graphs are equal
