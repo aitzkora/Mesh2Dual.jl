@@ -46,7 +46,7 @@ function write_par_dgraph(;xadj::Vector{T}, adjncy::Vector{T}, elmdist::Vector{T
   MPI.Allreduce!(edgeglbnbr, MPI.SUM, comm)
   println(io, format_version) # write version
   println(io, size,"\t", rank) # write procglbnum and procglbnim
-  println(io, elmdist[end], "\t",  edgeglbnbr[]) # write global vertices and edges number
+  println(io, elmdist[end]-baseval, "\t",  edgeglbnbr[]) # write global vertices and edges number
   println(io, elmlocnbr, "\t", edgelocnbr) # write local number of elements and size of vertlocnbr
   println(io, baseval, "\t000") # write baseval and chaco code
   for i=1:length(xadj)-1

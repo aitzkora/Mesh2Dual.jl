@@ -12,7 +12,7 @@ function check(::Type{T}, f1::String, f2::String, baseval::T = zero(T)) where {T
   close(io1)
   close(io2)
   for i=1:length(adj1)
-    if (sort(adj1[i]) != sort(adj2[i]) .+ baseval)
+    if (sort(adj1[i]) != sort(adj2[i]))
       println("$f1 and $f2 are differents")
       exit(-1)
     end
